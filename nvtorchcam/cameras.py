@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data._utils.collate import default_collate_fn_map
-import numpy as np
 from nvtorchcam import utils
 
 
@@ -20,7 +19,7 @@ class CameraBase():
     def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         """valid means pix in in U
         Args:
-            pix: (*self.shape, *group_shape, 2) 
+            pix: (*self.shape, *group_shape, pixel_dim) 
             unit_vec: bool
 
         Returns:
@@ -38,7 +37,7 @@ class CameraBase():
             depth_is_along_ray: bool
 
         Returns:
-            pix: (*self.shape, *group_shape, 2)
+            pix: (*self.shape, *group_shape, pixel_dim)
             depth: (*self.shape, *group_shape)
             valid: (*self.shape, *group_shape)
         """
@@ -89,17 +88,72 @@ class CameraBase():
     def expand(self, *expand_shape: Tuple[int]) -> CameraBase:
         raise NotImplementedError('')
 
+    def flip(self, *dims: Tuple[int]) -> CameraBase:
+        raise NotImplementedError('')
+
+    def clone(self) -> CameraBase:
+        raise NotImplementedError('')
+
     def get_camera_rays(self, res: Tuple[int, int], unit_vec: bool) -> Tuple[Tensor, Tensor, Tensor]:
+        """
+        Args:
+            res: (h,w)
+            unit_vec: where dirs is normalized to be a unit vector
+
+        Returns:
+            origin: (*self.shape, h, w, 3)
+            dirs: (*self.shape, h, w, 3)
+            valid: (*self.shape, h, w)
+        """
         grid = self.get_normalized_grid(res)
         return self.pixel_to_ray(grid, unit_vec)
 
     def get_normalized_grid(self, res: Tuple[int, int]) -> Tensor:
+        """
+        Args:
+            res: (h,w)
+
+        Returns:
+            grid: (*self.shape, h, w, pixel_dim)
+        """
         grid = utils.get_normalized_grid(res, self.device)
         shape = self.shape
         for _ in range(len(shape)):
             grid = grid.unsqueeze(0)
         grid = grid.expand(*shape, -1, -1, -1)
         return grid
+
+    def unproject_depth(self, depth: Tensor,
+                        to_world: Optional[Tensor] = None,
+                        depth_is_along_ray: bool = False):
+        """
+        Unproject *depthmaps_per_camera to pointcloud images. Optionally transform
+        pointcloud to world coordinates
+
+        Args:
+            depth: (*self.shape, *depthmaps_per_camera, h, w)
+            to_world (*self.shape, 4, 4)
+
+        Returns:
+            point_cloud: (*self.shape, *depth_maps_per_camera, 3)
+            valid: (*self.shape, *depth_maps_per_camera)
+        """
+        group_shape, batch_numel = utils._get_group_shape(
+            self.shape, depth.shape[:-2])
+
+        origin, dirs, valid = self.get_camera_rays(
+            depth.shape[-2:], unit_vec=depth_is_along_ray)
+        for _ in group_shape:
+            origin = origin.unsqueeze(-4)
+            dirs = dirs.unsqueeze(-4)
+            valid = valid.unsqueeze(-3)
+
+        point_cloud = origin + dirs*depth.unsqueeze(-1)
+        valid = valid.expand(point_cloud.shape[:-1])
+
+        if to_world is not None:
+            point_cloud = utils.apply_affine(to_world, point_cloud)
+        return point_cloud, valid
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs={}):
@@ -113,6 +167,9 @@ class CameraBase():
             if len(types) == 1 and _HeterogeneousCamera not in types:
                 return obj_list[0]._cat(obj_list, dim=dim)
             else:
+                if CubeCamera in types:
+                    raise RuntimeError(
+                        'CubeCamera is not supported in heterogeneous batch')
                 obj_list_as_hetero = []
                 for obj in obj_list:
                     if not isinstance(obj, _HeterogeneousCamera):
@@ -129,6 +186,9 @@ class CameraBase():
             if len(types) == 1 and _HeterogeneousCamera not in types:
                 return obj_list[0]._stack(obj_list, dim=dim)
             else:
+                if CubeCamera in types:
+                    raise RuntimeError(
+                        'CubeCamera is not supported in heterogeneous batch')
                 obj_list_as_hetero = []
                 for obj in obj_list:
                     if not isinstance(obj, _HeterogeneousCamera):
@@ -243,6 +303,16 @@ class TensorDictionaryCamera(CameraBase):
                       for k, v in self._values.items()}
         return type(self)(new_values, self._shared_attributes)
 
+    def flip(self, *dims):
+        if (max(dims) >= len(self.shape)) or (min(dims) < -len(self.shape)):
+            raise IndexError()
+        new_values = {k: v.flip(dims) for k, v in self._values.items()}
+        return type(self)(new_values, self._shared_attributes)
+
+    def clone(self):
+        new_values = {k: v.clone() for k, v in self._values.items()}
+        return type(self)(new_values, self._shared_attributes.copy()
+                          if self._shared_attributes is not None else None)
 
 class TensorDictionaryAffineCamera(TensorDictionaryCamera):
     """Base class for all cameras that project via a projection function followd by an intrinsics
@@ -272,7 +342,7 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
 
         origin = origin.reshape(*self.shape, *group_shape, 3)
         dirs = dirs.reshape(*self.shape, *group_shape, 3)
-        valid = valid.reshape(*self.shape, *group_shape)
+        valid = valid.reshape(self.shape + group_shape)
         return origin, dirs, valid
 
     def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
@@ -298,8 +368,8 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
         pix = f1_f2*pix + c1_c2
 
         pix = pix.reshape(*self.shape, *group_shape, 2)
-        depth = depth.reshape(*self.shape, *group_shape)
-        valid = valid.reshape(*self.shape, *group_shape)
+        depth = depth.reshape(self.shape + group_shape)
+        valid = valid.reshape(self.shape + group_shape)
         return pix, depth, valid
 
     def projection_function(self, pts: Tensor, depth_is_along_ray: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
@@ -336,7 +406,7 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
         """
         affine = _parse_intrinsics(affine)
         assert affine.shape[:-1] == self.shape
-        
+
         new_scale = self._values['affine'][..., 0:2]*affine[..., 0:2]
         if multiply_on_right:
             new_shift = self._values['affine'][..., 0:2] * \
@@ -432,12 +502,11 @@ class OrthographicCamera(TensorDictionaryAffineCamera):
         return origin, dirs, valid
 
 
-
 class EquirectangularCamera(TensorDictionaryAffineCamera):
 
     @staticmethod
-    def make(phi_range: Union[Tensor, Tuple[float, float]] = (-np.pi, np.pi),
-             theta_range: Union[Tensor, Tuple[float, float]] = (0, np.pi),
+    def make(phi_range: Union[Tensor, Tuple[float, float]] = (-torch.pi, torch.pi),
+             theta_range: Union[Tensor, Tuple[float, float]] = (0, torch.pi),
              min_distance: Union[Tensor, float] = 1e-6,
              batch_shape: Optional[Tuple[int, ...]] = None,
              restrict_valid_rays: bool = True):
@@ -508,13 +577,12 @@ class EquirectangularCamera(TensorDictionaryAffineCamera):
 
         origin = torch.zeros_like(dirs)
         if self._shared_attributes['restrict_valid_rays']:
-            valid = (pix[:, :, 0] < np.pi) & (pix[:, :, 0] >= -
-                                              np.pi) & (pix[:, :, 1] <= np.pi) & (pix[:, :, 1] >= 0)
+            valid = (pix[:, :, 0] < torch.pi) & (pix[:, :, 0] >= -
+                                                 torch.pi) & (pix[:, :, 1] <= torch.pi) & (pix[:, :, 1] >= 0)
         else:
             valid = torch.ones_like(dirs[..., 0], dtype=torch.bool)
 
         return origin, dirs, valid
-
 
 
 class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
@@ -541,10 +609,10 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
         distance_min = _check_shape_and_convert_scalar_float(
             distance_min, batch_shape, 'distance_min')
 
-        if torch.any(theta_max > np.pi):
+        if torch.any(theta_max > torch.pi):
             raise RuntimeError(
                 'theta max must be less than pi i.e. FoV must be less than 2pi = 360 degress')
-        if torch.any((theta_max > np.pi/2) & (distance_min < 0)):
+        if torch.any((theta_max > torch.pi/2) & (distance_min < 0)):
             warnings.warn(
                 "Creating OpenCVFisheyeCamera with z_min <= sin(theta_max). This means unprojection is not injective")
 
@@ -582,7 +650,7 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
         if depth_is_along_ray:
             depth = distance
         else:
-            depth = torch.abs( pts[..., 2] )
+            depth = torch.abs(pts[..., 2])
 
         return pix, depth, valid
 
@@ -599,7 +667,7 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
         valid = theta_d < theta_d_max
 
         if not unit_vec:
-            dirs = dirs/ torch.abs( dirs[:, :, 2:3] )
+            dirs = dirs / torch.abs(dirs[:, :, 2:3])
 
         origin = torch.zeros_like(dirs)
         return origin, dirs, valid
@@ -616,6 +684,92 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
         theta_d = theta*(1 + ks[:, 0:1]*theta2 + ks[:, 1:2]
                          * theta4 + ks[:, 2:3]*theta6 + ks[:, 3:4]*theta8)
         return theta_d.unsqueeze(-1)
+
+
+class OpenCVCamera(TensorDictionaryAffineCamera):
+
+    @staticmethod
+    def make(intrinsics: Tensor,
+             ks: Tensor,
+             ps: Union[Tensor, float],
+             z_min: Union[Tensor, float] = 1e-6,
+             num_undistort_iters: int = 100):
+        """
+        Args:
+            intrinsics: (*, 4) or (*, 3, 3)
+            ks: (*, 6)
+            ps: (*, 2)
+            z_min: (*) or float
+        """
+        intrinsics = _parse_intrinsics(intrinsics)
+        batch_shape = intrinsics.shape[:-1]
+        ks = _check_shape_and_convert_scalar_float(
+            ks, batch_shape + (6,), 'ks')
+        ps = _check_shape_and_convert_scalar_float(
+            ps, batch_shape + (2,), 'ps')
+        z_min = _check_shape_and_convert_scalar_float(
+            z_min, batch_shape, 'z_min')
+
+        _values = {'affine': intrinsics,
+                   'ks': ks,
+                   'ps': ps,
+                   'z_min': z_min.unsqueeze(-1)}
+        _shared_attributes = {'num_iters': num_undistort_iters}
+        return OpenCVCamera(_values, _shared_attributes)
+
+    def is_central(self) -> bool:
+        return True
+
+    def projection_function(self, pts: Tensor,
+                            depth_is_along_ray: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+        ks = self._values['ks'].reshape(-1, 6)
+        ps = self._values['ps'].reshape(-1, 2)
+        z_min_flat = self._values['z_min'].reshape(-1, 1, 1)
+
+        valid = pts[:, :, 2] > z_min_flat.squeeze(-1)
+        denom = torch.max(pts[:, :, 2:3], z_min_flat)
+        pix_undist = pts[:, :, 0:2]/denom
+        pix = self.opencv_distortion(ks, ps, pix_undist)
+
+        if depth_is_along_ray:
+            depth = torch.norm(pts, dim=-1)*torch.sign(pts[:, :, 2])
+        else:
+            depth = pts[..., 2]
+
+        return pix, depth, valid
+
+    def unprojection_function(self, pix: Tensor, unit_vec: bool = False):
+        ks = self._values['ks'].reshape(-1, 6)
+        ps = self._values['ps'].reshape(-1, 2)
+        pix_undist = utils.newton_inverse(lambda x: self.opencv_distortion(
+            ks, ps, x), pix, pix, iters=self._shared_attributes['num_iters'])
+
+        dirs = torch.cat(
+            (pix_undist, torch.ones_like(pix_undist[:, :, 0:1])), dim=-1)
+
+        if unit_vec:
+            dirs = F.normalize(dirs, dim=-1)
+        valid = torch.ones_like(dirs[..., 0], dtype=torch.bool)
+        origin = torch.zeros_like(dirs)
+        return origin, dirs, valid
+
+    @staticmethod
+    def opencv_distortion(ks: Tensor, ps: Tensor, pix: Tensor):
+        # (b,4) (b,2) (b,n,2)
+        # return (b,n,2)
+        u2_v2 = pix**2
+        uv = torch.prod(pix, dim=2)
+        r2 = torch.sum(u2_v2, dim=2)
+        r4 = r2 * r2
+        r6 = r4 * r2
+        radial = (1 + ks[:, 0:1] * r2 + ks[:, 1:2] * r4 + ks[:, 2:3] * r6) / \
+                 (1 + ks[:, 3:4] * r2 + ks[:, 4:5] * r4 + ks[:, 5:6] * r6)
+
+        pix = pix * radial.unsqueeze(-1)
+        pix = pix + 2 * ps.unsqueeze(1) * uv.unsqueeze(-1)
+        p2_p1 = ps.flip(-1)
+        pix = pix + p2_p1.unsqueeze(1) * (r2.unsqueeze(-1) + 2 * u2_v2)
+        return pix
 
 
 class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
@@ -641,10 +795,10 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
         distance_min = _check_shape_and_convert_scalar_float(
             distance_min, batch_shape, 'distance_min')
 
-        if torch.any(theta_max > np.pi):
+        if torch.any(theta_max > torch.pi):
             raise RuntimeError(
                 'theta max must be less than pi i.e. FoV must be less than 2pi = 360 degress')
-        if torch.any((theta_max > np.pi/2) & (distance_min < 0)):
+        if torch.any((theta_max > torch.pi/2) & (distance_min < 0)):
             warnings.warn(
                 "Creating OpenCVFisheyeCamera with z_min <= sin(theta_max). This means unprojection is not injective")
 
@@ -741,7 +895,6 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
         return super()._stack(new_obj_list, dim=dim)
 
 
-
 class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
 
     @staticmethod
@@ -775,14 +928,14 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
         if torch.any(xi < 1):
             raise RuntimeError(
                 'Kitti360FisheyeCamera only implemented for x_i greater than 1')
-        if torch.any(theta_max > np.pi):
+        if torch.any(theta_max > torch.pi):
             raise RuntimeError(
                 'theta max must be less than pi i.e. FoV must be less than 2pi = 360 degress')
         max_theta_max = torch.acos(-1/xi)
         if torch.any(theta_max > max_theta_max):
             raise RuntimeError('theta_max too large. Largest possible theta_max is {} but got theta_max {}'.format(
                 max_theta_max, theta_max))
-        if torch.any((theta_max > np.pi/2) & (distance_min < 0)):
+        if torch.any((theta_max > torch.pi/2) & (distance_min < 0)):
             warnings.warn(
                 "Creating OpenCVFisheyeCamera with z_min <= sin(theta_max). This means unprojection is not injective")
 
@@ -836,9 +989,9 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
         scale = 1+ks[:, 0:1, None]*r2 + ks[:, 1:2, None]*r2*r2
         return r*scale
 
-    def unprojection_function(self, 
-                             pix: Tensor,
-                             unit_vec: bool = False) -> Union[Tensor, Tensor, Tensor]:
+    def unprojection_function(self,
+                              pix: Tensor,
+                              unit_vec: bool = False) -> Union[Tensor, Tensor, Tensor]:
         ks = self._values['ks'].reshape(-1, 2)  # (b,2)
         xi = self._values['xi'].reshape(-1, 1, 1)  # (b,1,1)
         r_d_max = self._values['r_d_max'].reshape(-1, 1, 1)  # (b,1,1)
@@ -865,10 +1018,9 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
         return origin, dirs, valid
 
 
-
 class _HeterogeneousCamera(CameraBase):
     def __init__(self, my_dict: Dict[CameraBase, Tuple[Tensor, CameraBase]], shape: Tuple[int, ...]):
-        # keys are camera type values are tuples of (tensor representing linear index, and array of camera of k type)
+        # keys are camera type, values are tuples of (tensor representing linear index, and array of camera of k type)
         self.my_dict = my_dict
         self._shape = torch.Size(shape)
         key = next(iter(my_dict.keys()))
@@ -908,7 +1060,7 @@ class _HeterogeneousCamera(CameraBase):
 
         origin = origin.reshape(*self.shape, *group_shape, 3)
         dirs = dirs.reshape(*self.shape, *group_shape, 3)
-        valid = valid.reshape(*self.shape, *group_shape)
+        valid = valid.reshape(self.shape + group_shape)
         return origin, dirs, valid
 
     def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
@@ -925,8 +1077,8 @@ class _HeterogeneousCamera(CameraBase):
                 pts[idx, :, :], depth_is_along_ray=depth_is_along_ray)
 
         pix = pix.reshape(*self.shape, *group_shape, 2)
-        depth = depth.reshape(*self.shape, *group_shape)
-        valid = valid.reshape(*self.shape, *group_shape)
+        depth = depth.reshape(self.shape + group_shape)
+        valid = valid.reshape(self.shape + group_shape)
         return pix, depth, valid
 
     @staticmethod
@@ -1076,6 +1228,91 @@ class _HeterogeneousCamera(CameraBase):
                 out = torch.cat([out]*expand_shape[dim], dim=dim)
         return out
 
+    def flip(self, *dims) -> _HeterogeneousCamera:
+        temp = torch.arange(math.prod(self.shape)).reshape(self.shape)
+        new_to_old = temp.flip(dims)
+        new_shape = new_to_old.shape
+        new_to_old = new_to_old.reshape(-1)
+        old_to_new = _invert_permutation(new_to_old)
+        new_my_dict = {}
+        for k, v in self.my_dict.items():
+            new_my_dict[k] = (old_to_new[v[0]], v[1])
+
+        return _HeterogeneousCamera(new_my_dict, new_shape)
+
+    def clone(self) -> _HeterogeneousCamera:
+        new_my_dict = {k: (v[0].clone(), v[1].clone())
+                       for k, v in self.my_dict.items()}
+        return _HeterogeneousCamera(new_my_dict, self.shape)
+
+
+class CubeCamera(TensorDictionaryCamera):
+
+    @staticmethod
+    def make(batch_shape, device='cpu'):
+        # simple way to hold shape and device and implement tensor-like operations
+        return CubeCamera({'tensor': torch.zeros(batch_shape, device=device).unsqueeze(-1)})
+
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+        """
+        Args:
+            pix: (*self.shape, *group_shape, 3) 
+            unit_vec: bool
+
+        Returns:
+            origin: (*self.shape, *group_shape, 3)
+            dirs: (*self.shape, *group_shape, 3)
+            valid: (*self.shape, *group_shape)
+        """
+        if unit_vec:
+            dirs = F.normalize(pix, dim=-1)
+        else:
+            dirs = pix/torch.max(torch.abs(pix), dim=-1,
+                                 keepdim=True).clamp_min(1e-12)
+
+        origin = torch.zeros_like(dirs)
+        valid = torch.ones_like(dirs[..., 0], dtype=torch.bool)
+        return origin, dirs, valid
+
+    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+        """
+        Args:
+            pts: (*self.shape, *group_shape, 3)
+            depth_is_along_ray: bool
+
+        Returns:
+            pix: (*self.shape, *group_shape, 3)
+            depth: (*self.shape, *group_shape)
+            valid: (*self.shape, *group_shape)
+        """
+        if depth_is_along_ray:
+            depth = torch.norm(pts, dim=-1)
+        else:
+            depth = torch.max(torch.abs(pts), dim=-1)[0]
+
+        pix = pts/depth.unsqueeze(-1).clamp_min(1e-12)
+        valid = torch.ones_like(pix[..., 0], dtype=torch.bool)
+        return pix, depth, valid
+
+    def is_central(self) -> bool:
+        return True
+
+    def get_camera_rays(self, res: Tuple[int, int], unit_vec: bool) -> Tuple[Tensor, Tensor, Tensor]:
+        if res[0] != 6*res[1]:
+            raise RuntimeError('invalid cubemap shape')
+        dirs = utils.get_normalized_grid_cubemap(
+            res[1], device=self.device)  # (*res, 3)
+        if unit_vec:
+            dirs = F.normalize(dirs, dim=-1)
+        dirs = dirs.reshape(
+            tuple([1]*len(self.shape)) + dirs.shape).expand(*self.shape, -1, -1, -1)
+        origin = torch.zeros_like(dirs)
+        valid = torch.ones_like(dirs[..., 0], dtype=torch.bool)
+        return origin, dirs, valid
+
+    def get_normalized_grid(self, res: Tuple[int, int]) -> Tensor:
+        raise RuntimeError('CubeCamera does not support get_normalized_grid')
+
 
 def _invert_permutation(perm: Tuple) -> Tensor:
     inv_perm = torch.zeros_like(perm)
@@ -1102,9 +1339,12 @@ def _check_shape_and_convert_scalar_float(value: Union[Tensor, float], expected_
             name, value.shape, expected_shape))
     return value
 
-#maybe move these to __init__.py? is that allowed
+# maybe move these to __init__.py? is that allowed
+
+
 def collate_camera_fn(batch, *, collate_fn_map=None):
     """make camera object compatible with automatic dataset batching"""
     return torch.stack(batch)
+
 
 default_collate_fn_map.update([(CameraBase, collate_camera_fn)])
