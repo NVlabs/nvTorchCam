@@ -26,13 +26,15 @@
 
 ## Purpose
 
-The purpose of this library is to facilitate the development of PyTorch models that leverage plane-sweep volumes (PSV) and related concepts such as sphere-sweep volumes or epipolar attention, in a way that is agnostic to the camera's projection model. This enables effortless transitions between camera models without modifying the network implementation.
+The purpose of this library is to facilitate the development of PyTorch models that leverage plane-sweep volumes (PSV) and related concepts such as sphere-sweep volumes or epipolar attention, in a way that is agnostic to the camera's projection model. This enables effortless transitions between camera models without modifying the network implementation. Originally designed for this flexibility, the library is also fully differentiable, allowing for other use cases such as optimizing camera parameters.
 
 A clear illustration of this library's utility can be seen in the comparison between casMVSNet [3] and 360MVSNet [1]. These methods share nearly identical methodology, their primary distinction lies in their implementation for different camera models: casMVSNet for the pinhole camera, and 360MVSNet for the Equirectangular panorama (ERP). With nvTorchCam, these two methods can effortlessly share implementation.
 
 Additionally, the library facilitates consistent data loading across various camera models in PyTorch, alongside a suite of utilities for image warping tasks such as undistortion, cost-volume construction, and stereo rectification, including rectification of ERPs. It also introduces capabilities for MVS fusion inspired by [MVSNet Pytorch](https://github.com/xy-guo/MVSNet_pytorch/blob/master/eval.py), but generalized to work with any camera model and run on GPU.
 
 ## Installation
+
+Install the [dependencies](#dependencies).
 
 Clone the repo and run `pip install .` from the project root. Run `pip install -e .` to install in development mode.
 
@@ -124,21 +126,27 @@ u, v = f0u' + c0, f1v' + c1
 Inverse: Newton's Method to convert from  u',v' back to x', y'.
 
 ##### EquirectangularCamera
-Parameters: phi_min, phi_max, theta_min, theta_max
+Parameters: f0, f1, c0, c1
 
 Projection Def:  
-f0 = 2/(phi_max-phi_min)  
-f1 = 2/(theta_max-theta_min)  
-c0 = (phi_max + phi_min)/(phi_max - phi_min)  
-c1 = (theta_max + theta_min)/(theta_max - theta_min)  
 r = sqrt(x^2 + y^2 + z^2)  
 u' = acos(-y / r)  
 v' = atan2(x, z)  
 u, v = f0u' + c0, f1v' + c1  
 
+
 Inverse: Analytic  
 
-Notes: For full 360 phi_min=-pi, phi_max=pi, theta_min=0, theta_max=pi  
+Notes: Rather than setting the parameters f0, f1, c0, c1 when calling the camera's make function it may be more intuitive to specify angular ranges. You can do this in the make function by setting phi_range and theta_range rather than intrinsics. Then f0, f1, c0, c1 will be set as
+
+theta_range = (theta_min, theta_max)  
+phi_range = (phi_min, phi_max)  
+f0 = 2/(phi_max-phi_min)  
+f1 = 2/(theta_max-theta_min)  
+c0 = (phi_max + phi_min)/(phi_max - phi_min)  
+c1 = (theta_max + theta_min)/(theta_max - theta_min)  
+
+For full 360 phi_min=-pi, phi_max=pi, theta_min=0, theta_max=pi  
 
 ##### OpenCVFisheyeCamera
 Parameters: f0, f1, c0, c1, k0, k1, k2, k3
@@ -168,7 +176,7 @@ u, v = f0u' + c0, f1v' + c1
 
 Inverse: Calculated used a "backward polynomial": theta = q0 + q1 * theta_d + q2 * theta_d^2 + ... + qM * theta_d^M. It is up to the user to specify this polynomial when the camera is instantiated such that it is an approximate inverse of the "forward polynomial": p0 + p1 * theta + p2 * theta^2 + ... + pN * theta^N.
 
-Notes: This camera is similar to OpenCVFisheyeCamera but handles arbitrary polynomials in the projection function represented by the coefficients p0,...,pN, and requires the user to specify a backward polynomial for converting pixels to rays. This polynomial inverse is potentially much faster than that Newton's Method.
+Notes: This camera is similar to OpenCVFisheyeCamera but handles arbitrary polynomials in the projection function represented by the coefficients p0,...,pN, and requires the user to specify a backward polynomial for converting pixels to rays. This polynomial inverse is potentially much faster than Newton's Method. Also note if optimizing the camera's backward polynomial the forward polynomial with NOT automatically update to remain an approximate inverse to the backward polynomial and vise-versa. 
 
 ##### Kitti360FisheyeCamera
 Parameters: f0, f1, c0, c1, k0, k1, xi
@@ -271,7 +279,9 @@ Please refer to the source code for useful camera functions such as: `get_camera
 
 #### Tensor-like Properties
 
-In addition to `.shape`, camera models support a number of other tensor-like operations such as: `shape`, `device`, `to`, `reshape`, `permute`, `transpose`, `squeeze`, `unsqueeze`, `expand`, `flip`, and `clone`. Tensor-slicing operations of cameras are also supported. Note that cameras should be treated as immutable objects and these function may return views or copies of the original camera data.
+In addition to `.shape`, camera models support a number of other tensor-like operations such as: `shape`, `device`, `to`, `reshape`, `permute`, `transpose`, `squeeze`, `unsqueeze`, `expand`, `flip`, `detach` and `clone`. Tensor-slicing operations of cameras are also supported. Note that cameras may return views or copies of the original camera data.
+
+One can also get an iterator of the cameras parameters with the method `named_tensors.` This may be useful for setting which parameters `requires_grad`.
 
 
 #### Heterogeneous Camera Batches
@@ -295,7 +305,7 @@ When slicing heterogeneous batches, the batch will devolve to homogeneous if app
    <class 'nvtorchcam.cameras.OrthographicCamera'>
 ```
 
-Note: _HeterogeneousCamera should not be created directly. Also note that CubeCamera objects cannot be used in heterogenous batches and will raise an error if they are concatenated with another type.
+Note: `_HeterogeneousCamera` should not be created directly. Also note that CubeCamera objects cannot be used in heterogenous batches and will raise an error if they are concatenated with another type.
 
 #### Stacking in Pytorch dataloaders
 

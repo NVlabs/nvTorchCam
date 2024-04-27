@@ -2,11 +2,54 @@ import torch
 from typing import Optional, Dict, Tuple, Union, Any, Callable
 from torch import Tensor
 
+__all__ = [
+    "in_image",
+    "get_normalized_grid",
+    "get_normalized_grid_cubemap",
+    "samples_from_image",
+    "samples_from_cubemap",
+    "apply_matrix",
+    "apply_affine",
+    "normalized_intrinsics_from_pixel_intrinsics",
+    "pixel_intrinsics_from_normalized_intrinsics",
+    "normalized_pts_from_pixel_pts",
+    "pixel_pts_from_normalized_pts",
+    "flat_intrinsics_from_intrinsics_matrix",
+    "intrinsics_matrix_from_flat_intrinsics",
+    "cart_from_spherical",
+    "spherical_from_cart",
+    "compute_jacobian",
+    "fit_polynomial",
+    "apply_poly",
+    "crop_to_affine",
+    "flatten_cubemap_for_visual",
+]
+
+
+def transform_infer_batch_group(func):
+    """Transform function taking (b, i, j) x (b, g, k) -> (b, g, k) to a function taking
+    (b*, i, j) x (b*, g*, k) -> (b*, g*, k)
+    """
+    def flatten_unflatten(A, x, **kwargs):
+        batch_shape = A.shape[:-2]
+        assert x.shape[: len(batch_shape)] == batch_shape
+        group_shape = x.shape[len(batch_shape) : -1]
+        batch_numel = batch_shape.numel()
+        group_numel = group_shape.numel()
+        result = func(
+            A.reshape(batch_numel, *A.shape[-2:]), x.reshape(batch_numel, group_numel, -1), **kwargs
+        )
+        reshaped_result = result.reshape(*batch_shape, *group_shape, -1)
+        return reshaped_result
+
+    return flatten_unflatten
+
 
 def in_image(pix: Tensor) -> Tensor:
-    """ Test if point is in the unit square [-1,1]x[-1,1]
+    """Test if point is in the unit square [-1,1]x[-1,1]
+
     Args:
-        pix:  (*, 2) 
+        pix:  (*, 2)
 
     Returns:
         :       (*,)
@@ -14,37 +57,46 @@ def in_image(pix: Tensor) -> Tensor:
     return torch.all(pix < 1, dim=-1) & torch.all(pix > -1, dim=-1)
 
 
-def get_normalized_grid(res: Tuple[int, int], device: torch.device, pad: Tuple[int, int, int, int] = (0, 0, 0, 0)) -> Tensor:
-    """ Get normalized pixel locations
+def get_normalized_grid(
+    res: Tuple[int, int], device: torch.device, pad: Tuple[int, int, int, int] = (0, 0, 0, 0)
+) -> Tensor:
+    """Get normalized pixel locations. Use pad to include grid points beyond [-1,1]x[-1,1].
+
     Args:
         res: (h,w)
+        device: torch.device
+        pad: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
     Returns:
         pix: (h,w,2)
     """
-    start_x = -1+1/res[1] - (2/res[1])*pad[0]
-    end_x = 1-1/res[1] + (2/res[1])*pad[1]
-    start_y = -1+1/res[0] - (2/res[0])*pad[2]
-    end_y = 1-1/res[0] + (2/res[0])*pad[3]
+    start_x = -1 + 1 / res[1] - (2 / res[1]) * pad[0]
+    end_x = 1 - 1 / res[1] + (2 / res[1]) * pad[1]
+    start_y = -1 + 1 / res[0] - (2 / res[0]) * pad[2]
+    end_y = 1 - 1 / res[0] + (2 / res[0]) * pad[3]
     x_pix = torch.linspace(
-        start_x, end_x, res[1]+pad[0]+pad[1], dtype=torch.float, device=device)
+        start_x, end_x, res[1] + pad[0] + pad[1], dtype=torch.float, device=device
+    )
     y_pix = torch.linspace(
-        start_y, end_y, res[0]+pad[2]+pad[3], dtype=torch.float, device=device)
-    x_y = torch.meshgrid([x_pix, y_pix], indexing='xy')
+        start_y, end_y, res[0] + pad[2] + pad[3], dtype=torch.float, device=device
+    )
+    x_y = torch.meshgrid([x_pix, y_pix], indexing="xy")
     pix = torch.stack(x_y, dim=2)
     return pix
 
 
 def get_normalized_grid_cubemap(res: int, device: torch.device, pad: int = 0) -> Tensor:
-    """   
+    """Get normalized cubemap locations locations. Use pad to include grid points beyond face.
+
     Args:
         res: w
 
     Returns:
         pix: (6*w,w,3)
+        device: torch.device
+        pad: int = 0
     """
-    grid = get_normalized_grid(
-        (res, res), device=device, pad=4*[pad])  # (w,w,2)
+    grid = get_normalized_grid((res, res), device=device, pad=4 * [pad])  # (w,w,2)
     o = torch.ones_like(grid[:, :, 0])
     face0 = torch.stack((o, -grid[:, :, 1], -grid[:, :, 0]), dim=-1)
     face1 = torch.stack((-o, -grid[:, :, 1], grid[:, :, 0]), dim=-1)
@@ -52,22 +104,24 @@ def get_normalized_grid_cubemap(res: int, device: torch.device, pad: int = 0) ->
     face3 = torch.stack((grid[:, :, 0], -o, -grid[:, :, 1]), dim=-1)
     face4 = torch.stack((grid[:, :, 0], -grid[:, :, 1], o), dim=-1)
     face5 = torch.stack((-grid[:, :, 0], -grid[:, :, 1], -o), dim=-1)
-    pix = torch.cat((face0, face1, face2, face3, face4, face5),
-                    dim=0)  # (*res, 3)
+    pix = torch.cat((face0, face1, face2, face3, face4, face5), dim=0)  # (*res, 3)
     return pix
 
 
-def samples_from_image(image: Tensor,
-                       pts: Tensor,
-                       mode: str = 'bilinear',
-                       align_corners: bool = False,
-                       return_in_image_mask: bool = False,
-                       padding_mode: str = 'zeros') -> Union[Tensor, Tuple[Tensor, Tensor]]:
-    """ Interpolate a batch of images at point locations pts. If return_in_image_mask = True also return
-        a mask indicated which pixels are within the image bounds
+def samples_from_image(
+    image: Tensor,
+    pts: Tensor,
+    mode: str = "bilinear",
+    align_corners: bool = False,
+    return_in_image_mask: bool = False,
+    padding_mode: str = "zeros",
+) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    """Interpolate a batch of images at point locations pts. If return_in_image_mask = True also 
+    return a mask indicated which pixels are within the image bounds
+
     Args:
             image (*batch_shape, channels, height, width)
-            pts: (*batch_shape, *group_shape, 2) 
+            pts: (*batch_shape, *group_shape, 2)
         Returns:
             values: (*batch_shape, channels, *group_shape)
             mask: (*batch_shape, *group_shape)
@@ -75,7 +129,7 @@ def samples_from_image(image: Tensor,
     batch_shape = image.shape[:-3]
     group_shape, batch_numel = _get_group_shape(batch_shape, pts.shape[:-1])
 
-    # suport evaluating bool image
+    # support evaluating bool image
     if image.dtype == torch.bool:
         is_bool = True
         image = image.half()
@@ -84,7 +138,8 @@ def samples_from_image(image: Tensor,
     image = image.reshape(batch_numel, *image.shape[-3:])
     pts_flat = pts.reshape(batch_numel, -1, 1, 2)
     values = torch.nn.functional.grid_sample(
-        image, pts_flat, align_corners=align_corners, mode=mode, padding_mode=padding_mode)  # (batch_numel, c, group_numel, 1)
+        image, pts_flat, align_corners=align_corners, mode=mode, padding_mode=padding_mode
+    )  # (batch_numel, c, group_numel, 1)
     values = values.reshape(*batch_shape, -1, *group_shape)
 
     if is_bool:
@@ -97,29 +152,34 @@ def samples_from_image(image: Tensor,
         return values
 
 
-def samples_from_cubemap(cubemap: Tensor,
-                         pts: Tensor,
-                         mode: str = 'bilinear') -> Tensor:
-    """ Interpolate a batch of cubes at directions pts.
+def samples_from_cubemap(cubemap: Tensor, pts: Tensor, mode: str = "bilinear") -> Tensor:
+    """Interpolate a batch of cubes at directions pts.
+
     Args:
             image (*batch_shape, channels, 6*width, width)
-            pts: (*batch_shape, *group_shape, 3) 
+            pts: (*batch_shape, *group_shape, 3)
         Returns:
             values: (*batch_shape, channels, *group_shape)
     """
-    if mode == 'bilinear':
-        mode = 'linear'
+    if mode == "bilinear":
+        mode = "linear"
     import nvdiffrast.torch as dr
+
     batch_shape = cubemap.shape[:-3]
     group_shape, batch_numel = _get_group_shape(batch_shape, pts.shape[:-1])
 
-    cubemap = cubemap.reshape(
-        batch_numel, *cubemap.shape[-3:]).unflatten(2, (6, -1))  # (b, c, 6, w, w)
+    cubemap = cubemap.reshape(batch_numel, *cubemap.shape[-3:]).unflatten(
+        2, (6, -1)
+    )  # (b, c, 6, w, w)
     cubemap = cubemap.permute(0, 2, 3, 4, 1)  # (b, 6, w, w, c)
     out_dtype = cubemap.dtype
     pts_flat = pts.reshape(batch_numel, -1, 1, 3)
-    values = dr.texture(cubemap.float().contiguous(), pts_flat.float(
-    ).contiguous(), boundary_mode='cube', filter_mode=mode)  # (b,-1,1,c)
+    values = dr.texture(
+        cubemap.float().contiguous(),
+        pts_flat.float().contiguous(),
+        boundary_mode="cube",
+        filter_mode=mode,
+    )  # (b,-1,1,c)
     values = values.type(out_dtype)
     values = values.permute(0, 3, 1, 2)
     values = values.reshape(*batch_shape, -1, *group_shape)
@@ -127,83 +187,42 @@ def samples_from_cubemap(cubemap: Tensor,
     return values
 
 
-def _apply_matrix_base(A: Tensor, pts: Tensor) -> Tensor:
-    # (b,i,j) (b,n,j)
-    # return (b,n,i)
-    assert A.size(2) == pts.size(2)
-    return torch.einsum('bij,bnj->bni', A, pts)
-
-# (*batch_shape,i,j) (*batch_shape,*group_shape,j)
-# return (*batch_shape,*group_shape,i)
-
-
+@transform_infer_batch_group
 def apply_matrix(A: Tensor, pts: Tensor) -> Tensor:
-    """ Transform batches of groups of points by batches of matrices
+    """Transform batches of groups of points by batches of matrices
+
     Args:
         A: (*batch_shape, d, d)
-        pts: (*batch_shape, *group_shape, d) 
+        pts: (*batch_shape, *group_shape, d)
     Returns:
         : (*batch_shape, *group_shape, d)
 
     """
-    return _transform_flatten_wrapper(A, pts, _apply_matrix_base)
+    assert A.size(2) == pts.size(2)
+    return torch.einsum("bij,bnj->bni", A, pts)
 
 
-def _apply_affine_base(T: Tensor, pts: Tensor) -> Tensor:
-    # (b,k+1,k+1) (b,n,k)
-    # return (b,n,k)
+@transform_infer_batch_group
+def apply_affine(T: Tensor, pts: Tensor) -> Tensor:
+    """Transform batches of groups of points by batches of affine transformations
+
+    Args:
+        A: (*batch_shape, d+1, d+1)
+        pts: (*batch_shape, *group_shape, d)
+    Returns:
+        : (*batch_shape, *group_shape, d)
+    """
     k = pts.size(-1)
-    assert T.shape[1:3] == (k+1, k+1)
+    assert T.shape[1:3] == (k + 1, k + 1)
     R = T[:, :k, :k]
     t = T[:, :k, k]
-    trans_points = _apply_matrix_base(R, pts) + t.unsqueeze(1)
+    trans_points = torch.einsum("bij,bnj->bni", R, pts) + t.unsqueeze(1)
     return trans_points
 
 
-def apply_affine(T: Tensor, pts: Tensor) -> Tensor:
-    """ Transform batches of groups of points by batches of affine transformations
-    Args:
-        A: (*batch_shape, d+1, d+1)
-        pts: (*batch_shape, *group_shape, d) 
-    Returns:
-        : (*batch_shape, *group_shape, d)
-    """
-    return _transform_flatten_wrapper(T, pts, _apply_affine_base)
-
-
-def _apply_homography_base(H: Tensor, pts: Tensor) -> Tensor:
-    # (b,k+1,k+1) (b,n,k)
-    # return (b,n,k)
-    k = pts.size(-1)
-    assert H.shape[1:3] == (k+1, k+1)
-    y = _apply_matrix_base(H[:, :, :k], pts) + H[:, :, k].unsqueeze(1)
-    y = y[:, :, :k]/y[:, :, k:]
-    return y
-
-
-def apply_homography(H: Tensor, pts: Tensor) -> Tensor:
-    """ Transform batches of groups of points by batches of homography transforms
-    Args:
-        H: (*batch_shape, d+1, d+1)
-        pts: (*batch_shape, *group_shape, d) 
-    Returns:
-        : (*batch_shape, *group_shape, d)
-    """
-    return _transform_flatten_wrapper(H, pts, _apply_homography_base)
-
-
-def _transform_flatten_wrapper(A: Tensor, pts: Tensor, base_fun: Callable[[Tensor, Tensor], Tensor]) -> Tensor:
-    # (*batch_shape, i, j)  (*batch_shape,*group_shape,k)
-    batch_shape = A.shape[:-2]
-    group_shape, batch_numel = _get_group_shape(batch_shape, pts.shape[:-1])
-    A = A.reshape(batch_numel, *A.shape[-2:])
-    pts = pts.reshape(batch_numel, -1, pts.shape[-1])
-    y = base_fun(A, pts)
-    y = y.reshape(*batch_shape, *group_shape, -1)
-    return y
-
-
-def _get_group_shape(batch_shape: torch.Size, batch_group_shape: torch.Size) -> Tuple[torch.Size, int]:
+def _get_group_shape(
+    batch_shape: torch.Size, batch_group_shape: torch.Size
+) -> Tuple[torch.Size, int]:
     n = len(batch_shape)
     assert batch_shape == batch_group_shape[:n]
     group_shape = batch_group_shape[n:]
@@ -211,13 +230,16 @@ def _get_group_shape(batch_shape: torch.Size, batch_group_shape: torch.Size) -> 
     return group_shape, batch_numel
 
 
-def normalized_intrinsics_from_pixel_intrinsics(intrinsics: Tensor, image_shape: Tuple[int, int]) -> Tensor:
-    """
+def normalized_intrinsics_from_pixel_intrinsics(
+    intrinsics: Tensor, image_shape: Tuple[int, int]
+) -> Tensor:
+    """Transform intrinsics matrix in pixel coordinates to one in normalized coordinates.
+
     Args:
         intrinsics: (*, 3, 3) or (*, 4)
-        image_shape: (height, width) 
+        image_shape: (height, width)
     Returns:
-        intrinsics_n: (*, 3, 3) or (*, 2)
+        intrinsics_n: (*, 3, 3) or (*, 4)
     """
     if intrinsics.shape[-2:] == (3, 3):
         intrinsics = flat_intrinsics_from_intrinsics_matrix(intrinsics)
@@ -225,14 +247,13 @@ def normalized_intrinsics_from_pixel_intrinsics(intrinsics: Tensor, image_shape:
     elif intrinsics.shape[-1] == 4:
         got_matrix_format = False
     else:
-        raise RuntimeError('intrinsics must have shape (*, 3, 3) or (*, 4)')
+        raise RuntimeError("intrinsics must have shape (*, 3, 3) or (*, 4)")
 
-    image_shape = torch.tensor(
-        (image_shape[1], image_shape[0]), device=intrinsics.device)
-    image_shape = image_shape.reshape(*([1]*(intrinsics.dim()-1)), 2)
-    image_shape_half_inv = 2/image_shape
-    new_scale = intrinsics[..., :2]*image_shape_half_inv
-    new_shift = intrinsics[..., 2:]*image_shape_half_inv - 1
+    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics.device)
+    image_shape = image_shape.reshape(*([1] * (intrinsics.dim() - 1)), 2)
+    image_shape_half_inv = 2 / image_shape
+    new_scale = intrinsics[..., :2] * image_shape_half_inv
+    new_shift = intrinsics[..., 2:] * image_shape_half_inv - 1
     intrinsics_n = torch.cat((new_scale, new_shift), dim=-1)
 
     if got_matrix_format:
@@ -240,13 +261,16 @@ def normalized_intrinsics_from_pixel_intrinsics(intrinsics: Tensor, image_shape:
     return intrinsics_n
 
 
-def pixel_intrinsics_from_normalized_intrinsics(intrinsics_n: Tensor, image_shape: Tuple[int, int]) -> Tensor:
-    """
+def pixel_intrinsics_from_normalized_intrinsics(
+    intrinsics_n: Tensor, image_shape: Tuple[int, int]
+) -> Tensor:
+    """Transform normalized intrinsics matrix to intrinsics matrix in pixel coordinates.
+
     Args:
         intrinsics_n: (*, 3, 3) or (*, 4)
-        image_shape: (height, width) 
+        image_shape: (height, width)
     Returns:
-        intrinsics: (*, 3, 3) or (*, 2)
+        intrinsics: (*, 3, 3) or (*, 4)
     """
     if intrinsics_n.shape[-2:] == (3, 3):
         intrinsics = flat_intrinsics_from_intrinsics_matrix(intrinsics)
@@ -254,14 +278,13 @@ def pixel_intrinsics_from_normalized_intrinsics(intrinsics_n: Tensor, image_shap
     elif intrinsics_n.shape[-1] == 4:
         got_matrix_format = False
     else:
-        raise RuntimeError('intrinsics must have shape (*, 3, 3) or (*, 4)')
+        raise RuntimeError("intrinsics must have shape (*, 3, 3) or (*, 4)")
 
-    image_shape = torch.tensor(
-        (image_shape[1], image_shape[0]), device=intrinsics_n.device)
-    image_shape = image_shape.reshape(*([1]*(intrinsics_n.dim()-1)), 2)
-    image_shape_half = image_shape/2
-    new_scale = intrinsics_n[..., :2]*image_shape_half
-    new_shift = intrinsics_n[..., 2:]*image_shape_half + image_shape_half
+    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics_n.device)
+    image_shape = image_shape.reshape(*([1] * (intrinsics_n.dim() - 1)), 2)
+    image_shape_half = image_shape / 2
+    new_scale = intrinsics_n[..., :2] * image_shape_half
+    new_shift = intrinsics_n[..., 2:] * image_shape_half + image_shape_half
     intrinsics = torch.cat((new_scale, new_shift), dim=-1)
     if got_matrix_format:
         intrinsics = intrinsics_matrix_from_flat_intrinsics(intrinsics)
@@ -269,40 +292,39 @@ def pixel_intrinsics_from_normalized_intrinsics(intrinsics_n: Tensor, image_shap
 
 
 def normalized_pts_from_pixel_pts(n_pts: Tensor, image_shape: Tuple[int, int]) -> Tensor:
-    """
+    """Transform pts in pixel coordinates to points in normalized coordinates.
+
     Args:
         n_pts: (*, 2)
-        image_shape: (height, width) 
+        image_shape: (height, width)
     Returns:
         pts: (*, 2)
     """
-    image_shape = torch.tensor(
-        (image_shape[1], image_shape[0]), device=n_pts.device)
-    image_shape = image_shape.reshape(*([1]*(n_pts.dim()-1)), 2)
-    image_shape_half_inv = 2/image_shape
-    pts = image_shape_half_inv*n_pts - 1
+    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=n_pts.device)
+    image_shape = image_shape.reshape(*([1] * (n_pts.dim() - 1)), 2)
+    image_shape_half_inv = 2 / image_shape
+    pts = image_shape_half_inv * n_pts - 1
     return pts
 
 
 def pixel_pts_from_normalized_pts(pts: Tensor, image_shape: Tuple[int, int]) -> Tensor:
-    """
+    """Transform points in normalized coordinates to points in pixel coordinates
+
     Args:
         pts: (*, 2)
-        image_shape: (height, width) 
+        image_shape: (height, width)
     Returns:
         n_pts: (*, 2)
     """
-    image_shape = torch.tensor(
-        (image_shape[1], image_shape[0]), device=pts.device)
-    image_shape = image_shape.reshape(*([1]*(pts.dim()-1)), 2)
-    image_shape_half = image_shape/2
-    n_pts = image_shape_half*pts + image_shape_half
+    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=pts.device)
+    image_shape = image_shape.reshape(*([1] * (pts.dim() - 1)), 2)
+    image_shape_half = image_shape / 2
+    n_pts = image_shape_half * pts + image_shape_half
     return n_pts
 
 
 def flat_intrinsics_from_intrinsics_matrix(K: Tensor) -> Tensor:
-    """ 
-    Converts flat intrinsics matrix to flat_intrinsics. See doc for
+    """Converts 3x3 intrinsics matrix to flat representation see 
     intrinsics_matrix_from_flat_intrinsics
 
     Args:
@@ -314,8 +336,7 @@ def flat_intrinsics_from_intrinsics_matrix(K: Tensor) -> Tensor:
 
 
 def intrinsics_matrix_from_flat_intrinsics(flat_intrinsics: Tensor) -> Tensor:
-    """ 
-    Converts flat_intrinsics of format (f1, f2, p1, p2) to 3x3 intrinsics matrix
+    """Converts flat_intrinsics of format (f1, f2, p1, p2) to 3x3 intrinsics matrix
         [[f1, 0, p1]
         [0 ,f2, p2]
         [0,  0,  1]]
@@ -326,7 +347,12 @@ def intrinsics_matrix_from_flat_intrinsics(flat_intrinsics: Tensor) -> Tensor:
         intrinsics_matrix: (*, 3, 3)
     """
     intrinsics_matrix = torch.zeros(
-        *flat_intrinsics.shape[:-1], 3, 3, device=flat_intrinsics.device, dtype=flat_intrinsics.dtype)
+        *flat_intrinsics.shape[:-1],
+        3,
+        3,
+        device=flat_intrinsics.device,
+        dtype=flat_intrinsics.dtype
+    )
     intrinsics_matrix[..., 0, 0] = flat_intrinsics[..., 0]
     intrinsics_matrix[..., 1, 1] = flat_intrinsics[..., 1]
     intrinsics_matrix[..., 0, 2] = flat_intrinsics[..., 2]
@@ -336,9 +362,10 @@ def intrinsics_matrix_from_flat_intrinsics(flat_intrinsics: Tensor) -> Tensor:
 
 
 def cart_from_spherical(phi_theta: Tensor, r: Union[Tensor, float] = 1.0) -> Tensor:
-    """
+    """Cartesian coordinates from spherical coordinates
+
     Args:
-        phi_theta: (*, 2) 
+        phi_theta: (*, 2)
         r:         (*)
 
     Returns:
@@ -347,9 +374,9 @@ def cart_from_spherical(phi_theta: Tensor, r: Union[Tensor, float] = 1.0) -> Ten
     theta = phi_theta[..., 1]
     phi = phi_theta[..., 0]
     s = torch.sin(theta)
-    z = r*s*torch.cos(phi)
-    x = r*s*torch.sin(phi)
-    y = -r*torch.cos(theta)
+    z = r * s * torch.cos(phi)
+    x = r * s * torch.sin(phi)
+    y = -r * torch.cos(theta)
     out = torch.stack((x, y, z), dim=-1)
 
     return out
@@ -374,31 +401,28 @@ def spherical_from_cart(vec: Tensor, clamp_value: float = 1):
     return phi_theta, r
 
 
-def newton_inverse(f, y: Tensor, initial_x: Tensor, iters: int = 10) -> Tensor:
-    x = initial_x
-    for i in range(0, iters):
-        with torch.enable_grad():
-            f_of_x, Df = compute_jacobian(f, x)
-        inv_Df = torch.inverse(Df)
-        diff = y-f_of_x
-        delta_x = torch.einsum('bnij,bnj->bni', inv_Df, diff)
-        x = x + delta_x
-        x = x.detach()
-    return x
+def compute_jacobian(f, x, *theta):
+    """Compute the jacobian of f with respect to x where f is a function parametrized by theta_i
 
-
-def compute_jacobian(f, x: Tensor) -> Tuple[Tensor, Tensor]:
-    # function taking (b,n,d) to (b,n,d) and (b,n,d)
-    # return (b,n,d) (b,n,d,d)
+    Args:
+        f: function taking (b, n, d) x (b, t_1) x ... x (b, t_k) -> (b, n, d)
+           s.t. out[b, i, j] = f_b(theta_1[b,:], ..., theta_k[b,:], x[b, i, j])
+        theta: Tensors each of shapes (b, t_i)
+        x: Tensor (b, n, d)
+    Returns:
+        y = f(x, *theta): Tensor (b,n,d)
+        Df = partial_f/partial_x at x: Tensor (b,n,d,d)
+    """
     b, n, dim = x.shape
-    id = torch.eye(dim, device=x.device).reshape(
-        1, 1, dim, dim).expand(b, n, dim, dim)
+    id = torch.eye(dim, device=x.device).reshape(1, 1, dim, dim).expand(b, n, dim, dim)
     Df_columns = []
+    x = x.detach()
+    theta = [theta_i.detach() for theta_i in theta]
     x.requires_grad = True
-    y = f(x)
+    y = f(x, *theta)
     for i in range(0, dim):
         torch.autograd.backward(y, id[:, :, i], retain_graph=True)
-        Df_columns.append(x.grad.clone().detach())
+        Df_columns.append(x.grad.detach().clone())
         x.grad.zero_()
 
     Df = torch.stack(Df_columns, dim=2)
@@ -406,12 +430,19 @@ def compute_jacobian(f, x: Tensor) -> Tuple[Tensor, Tensor]:
 
 
 def fit_polynomial(x: Tensor, y: Tensor, degree: int) -> Tensor:
-    # args: (b,n), (b,n)  int
-    # degree=n means has n+1 coefficients
+    """Fit a polynomial given a number of (x,y) pairs
+    
+    Args:
+        x:        (b, num_points) 
+        y:        (b, num_points) 
+        degree:   degree of polynomial to fit
+    Returns:
+        out:           (b, degree+1)
+    """
     cur_col = torch.ones_like(x)
     cols = [cur_col]
     for _ in range(degree):
-        cur_col = cur_col*x
+        cur_col = cur_col * x
         cols.append(cur_col)
     mat = torch.stack(cols, dim=-1)
     coeffs = torch.linalg.lstsq(mat, y)[0]
@@ -419,40 +450,57 @@ def fit_polynomial(x: Tensor, y: Tensor, degree: int) -> Tensor:
 
 
 def apply_poly(coeffs: Tensor, vals: Tensor) -> Tensor:
-    # coeffs[:,i] = the coefficient on x^i
-    # (b,k) (b,n)
-    # return (b,n)
+    """Apply a batch of polynomials to batches of groups of numbers
+
+    formally:
+    out[b,i] = coeffs[b,0] * vals[b,:]**0 + coeffs[b,1] * vals[b,:]**1 + ... 
+                   + coeffs[b,k-1] * vals[b,:]**(k-1)
+    Args:
+        coeffs:        (b, k) 
+        val:           (b, n) 
+    Returns:
+        out:           (b, n)
+    """
     k = coeffs.size(1)
     out = torch.zeros_like(vals)
-    for i in range(k-1, -1, -1):
-        out = coeffs[:, i:i+1] + out*vals
+    for i in range(k - 1, -1, -1):
+        out = coeffs[:, i : i + 1] + out * vals
     return out
 
 
 def crop_to_affine(lrtb: Tensor, normalized: bool = True, image_shape: Tuple[int, int] = None):
-    """lrtb (*b, 4) of left, right, top, bottom"""
+    """Given the 4 corners of a box as a tensor lrtb = left, right, top, bottom return the 
+    corresponding affine transform
+    
+    Args:
+        lrtb: (b*, 4) 
+        normalized: bool, whether 4 corners are in normalized image coordinates
+        image_shape: needed when not using normalized coordinates
+    Returns:
+        out:           (b, n)
+    """
     lrtb = lrtb.unflatten(-1, (2, 2))
     lt = lrtb[..., 0]
     rb = lrtb[..., 1]
     if not normalized:
         if image_shape is None:
-            raise RuntimeError(
-                'If using unnormalized pixel positions must specify image_shape')
+            raise RuntimeError("If using unnormalized pixel positions must specify image_shape")
         lt = normalized_pts_from_pixel_pts(lt, image_shape)
         rb = normalized_pts_from_pixel_pts(rb, image_shape)
 
     det = lt - rb
-    scale = -2/det
-    shift = (lt+rb)/det
+    scale = -2 / det
+    shift = (lt + rb) / det
     flat_affine = torch.cat((scale, shift), dim=-1)
     return flat_affine
 
 
 def flatten_cubemap_for_visual(cubemap: Tensor, mode: int = 0):
-    """ Flatten cubemap for visualization. Mode 0 is t shape. Mode 1
+    """Flatten cubemap for visualization. Mode 0 is t shape. Mode 1
         less empty space
+
     Args:
-        cubemap: (*, c, 6*w, w) 
+        cubemap: (*, c, 6*w, w)
 
     Returns:
         flattened:  (*, c, 3w, 4w) if mode == 0 else (*, c, 2w, 4w)
@@ -461,8 +509,7 @@ def flatten_cubemap_for_visual(cubemap: Tensor, mode: int = 0):
     # (b, c, 6, w, w)
     cubemap = cubemap.reshape(-1, *cubemap.shape[-3:]).unflatten(-2, (6, -1))
     faces = torch.unbind(cubemap, dim=2)
-    middle = torch.cat([faces[1], faces[4], faces[0],
-                       faces[5]], dim=-1)  # (b, c, w, 4w)
+    middle = torch.cat([faces[1], faces[4], faces[0], faces[5]], dim=-1)  # (b, c, w, 4w)
     if mode == 0:
         z = torch.full_like(faces[0], torch.nan)
         top = torch.cat([z, faces[2], z, z], dim=-1)
@@ -470,7 +517,7 @@ def flatten_cubemap_for_visual(cubemap: Tensor, mode: int = 0):
         flattened = torch.cat([top, middle, bottom], dim=2)
     else:
         w = cubemap.size(-1)
-        wo2 = int(w/2)
+        wo2 = int(w / 2)
 
         top_left = faces[2][:, :, wo2:, :]
         top_right = torch.flip(faces[2][:, :, :wo2, :], (2, 3))

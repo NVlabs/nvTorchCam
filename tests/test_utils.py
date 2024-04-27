@@ -7,9 +7,20 @@ class TestCoords(unittest.TestCase):
     def setUp(self):
         pass
 
-    @unittest.skip('Uncomment to skip this test')
+    # @unittest.skip('Uncomment to skip this test')
     def test_in_image(self):
-        pass
+        pix = torch.tensor([[-1.0,-1.0],
+                     [-1.0,1.0],
+                     [1.0,-1.0],
+                     [1.0,1.0],
+                     [0.0,0.0],
+                     [1.0,0.0],
+                     [0.0,-1.0]])
+        
+
+        valid = utils.in_image(pix)
+        expected = torch.tensor([False, False, False, False,  True, False, False])
+        torch.testing.assert_close(valid, expected)
 
     # @unittest.skip('Uncomment to skip this test')
     def test_get_normalized_grid(self):
@@ -89,11 +100,7 @@ class TestCoords(unittest.TestCase):
         Ax_expected = torch.tensor([7., 27., 47.])
         torch.testing.assert_close(Ax, Ax_expected)
 
-    @unittest.skip('Uncomment to skip this test')
-    def test_apply_homography(self):
-        pass
-
-        # @unittest.skip('Uncomment to skip this test')
+    # @unittest.skip('Uncomment to skip this test')
     def test_normalized_unnormalize_pts(self):
         device = 'cpu'
         gt_unnorm_grid = torch.tensor([[[0.5000, 1.5000, 2.5000, 3.5000, 4.5000, 5.5000],
@@ -172,31 +179,6 @@ class TestCoords(unittest.TestCase):
         x = torch.randn(b, n, dim)
         f_of_x, Df = utils.compute_jacobian(f, x)
         torch.testing.assert_close(A.unsqueeze(1).expand(-1, n, -1, -1), Df)
-
-    # @unittest.skip('Uncomment to skip this test')
-    def test_newton_inverse(self):
-        a = torch.tensor([[[0.6596]],
-                          [[0.1789]]])
-
-        def f(x): return a*x*x
-
-        expected_x = torch.tensor([[[4.5446],
-                                    [3.9318],
-                                    [9.3187],
-                                    [9.0718],
-                                    [2.5480]],
-
-                                   [[4.4290],
-                                    [6.7423],
-                                    [4.3301],
-                                    [1.6754],
-                                    [2.8211]]])
-
-        y = f(expected_x)
-        # what to find x such that f(x) = y
-        initial_x = torch.ones_like(y)
-        x = utils.newton_inverse(f, y, initial_x, iters=10)
-        torch.testing.assert_close(x, expected_x)
 
     # @unittest.skip('Uncomment to skip this test')
     def test_fit_polynomial(self):

@@ -102,7 +102,7 @@ class TestCameras(unittest.TestCase):
         theta_range = torch.tensor([0, np.pi]).unsqueeze(0).expand(b, -1)
         min_distance = torch.ones(b)*0.01
         camera = cameras.EquirectangularCamera.make(
-            phi_range, theta_range, min_distance)
+            phi_range=phi_range, theta_range=theta_range, min_distance=min_distance)
 
         unit_vec = True
         self.project_to_pixel_test(camera, self.pts, unit_vec)
