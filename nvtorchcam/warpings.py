@@ -4,6 +4,7 @@ from nvtorchcam import utils
 from nvtorchcam import cameras
 from typing import Optional, Dict, Tuple, Union, Any, Callable, List
 from torch import Tensor
+import torchvision.transforms as TVT
 
 __all__ = [
     "backwarp_warp_pts",
@@ -29,7 +30,7 @@ def backwarp_warp_pts(
     trg_cam_to_src_cam: Tensor,
     depth_is_along_ray: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """Compute interpolation points to warp a source image or *group_shape source images to 
+    """Compute interpolation points to warp a source image or *group_shape source images to
     a target camera given a target camera depth.
 
     Args:
@@ -40,7 +41,7 @@ def backwarp_warp_pts(
         depth_is_along_ray: True = using distance, False = using depth
 
     Returns:
-        src_pts: (*batch_shape, *group_shape, *depthmaps_per_camera, h, w, pixel_dim) points to 
+        src_pts: (*batch_shape, *group_shape, *depthmaps_per_camera, h, w, pixel_dim) points to
                  interpolate src for warping
         src_pts_depth (*batch_shape, *group_shape, *depthmaps_per_camera, h, w)
         valid_mask:  (*batch_shape, *group_shape, *depthmaps_per_camera, h, w)
@@ -525,7 +526,7 @@ def affine_transform_image(
        $ camera1 = camera.affine_transform(affine)
        Then image1 comes from camera1
 
-     Args:
+    Args:
         image: (*batch_shape, c, h, w)  or list of (*batch_shape, c, h, w)
         affine: (*batch_shape, 4)
         interp_mode: method of interpolation if image is list should be a list of the same length
@@ -534,7 +535,7 @@ def affine_transform_image(
 
     Returns:
         transformed_image: (*batch_shape, c, *out_shape) or list of (*batch_shape, c,  *out_shape)
-        valid_mask: (*batch_shape,  *out_shape) or list of (*batch_shape,  *out_shape)
+        valid_mask: (*batch_shape,  *out_shape)
     """
 
     affine = cameras._parse_intrinsics(affine)
@@ -577,7 +578,7 @@ def crop_resize_image(
 ) -> Tuple[TensorOrTensorList, Tensor]:
     """Crop and resize an image. Is consistent with TensorDictionaryAffineCamera.crop
 
-     Args:
+    Args:
         image: (*batch_shape, c, h, w)  or list of (*batch_shape, c, h, w)
         lrtb: (*batch_shape, 4) left, right, top, bottom
         normalized: Whether lrtb are in normalized coordinates or pixel coordinates
@@ -587,7 +588,7 @@ def crop_resize_image(
 
     Returns:
         transformed_image: (*batch_shape, c, *out_shape) or list of (*batch_shape, c,  *out_shape)
-        valid_mask: (*batch_shape,  *out_shape) or list of (*batch_shape,  *out_shape)
+        valid_mask: (*batch_shape,  *out_shape)
     """
     if isinstance(image, list):
         image_shape = image[0].shape[-2:]
@@ -625,3 +626,160 @@ def _parse_image_interp_mode_padding_mode(
         padding_mode = [padding_mode]
         is_list = True
     return image, interp_mode, padding_mode, is_list
+
+
+class RandomResizedCropFlip(nn.Module):
+    def __init__(
+        self,
+        scale: Tuple[float, float],
+        ratio: Tuple[float, float],
+        flip_probability: float = 0.0,
+        mode: str = "torchvision",
+        interp_mode: Union[str, List[str]] = "bilinear",
+        padding_mode: Union[str, List[str]] = "zeros",
+        share_crop_across_views: bool = False,
+        world_flip: bool = False,
+        out_shape: Optional[Tuple[int, int]] = None,
+    ):
+        """
+        Randomly crop (and possibly flip) a batch of scene views, adjust camera intrinsics, and rescale 
+        to out_shape.
+
+        If mode == 'torchvision', the crop is based on torchvision's RandomResizedCrop algorithm. See 
+        torchvision's documentation for scale and ratio definitions.
+
+        If mode == 'width_aspect', the crop is selected by choosing a uniform number w in scale, which 
+        is the fraction of the original image width for the crop. Then, a uniform number r in ratio is 
+        chosen, and w/r is the fraction of the original height in the crop. Finally, a random position 
+        for this box location is chosen.
+
+        Args:
+            scale: When mode == 'torchvision', as defined in torchvision's RandomResizedCrop algorithm.
+                   When mode == 'width_aspect', select random width fraction in scale.
+            ratio: When mode == 'torchvision', as defined in torchvision's RandomResizedCrop algorithm.
+                   When mode == 'width_aspect', then as above.
+            flip_probability: Probability images will be horizontally flipped.
+            interp_mode: Method of interpolation.
+            padding_mode: Padding mode for "uncrops".
+            share_crop_across_views: Whether to use the same crop for each view of the same scene.
+            world_flip: Whether to flip to_world matrices during horizontal flip so the world is 
+                        flipped and focal lengths stay positive.
+            out_shape: Height and width of output tensor. If None, equal to input height and width.
+        """
+        super().__init__()
+
+        self.scale = scale
+        self.ratio = ratio
+        self.flip_probability = flip_probability
+        self.interp_mode = interp_mode
+        self.padding_mode = padding_mode
+        self.share_crop_across_frames = share_crop_across_views
+        self.world_flip = world_flip
+        self.out_shape = out_shape
+        if mode == "torchvision":
+            self.get_crop_matrix = self.get_crop_matrix_torchvision
+        elif mode == "width_aspect":
+            self.get_crop_matrix = self.get_crop_matrix_width_aspect
+        else:
+            raise ValueError(f"Invalid mode '{mode}'. Expected 'torchvision' or 'width_aspect'.")
+
+    def get_crop_matrix_width_aspect(
+        self, N: int, device: torch.device, image: TensorOrTensorList
+    ) -> Tensor:
+        new_half_width = torch.empty(N, device=device).uniform_(*self.scale)
+        new_half_height = new_half_width / torch.empty(N, device=device).uniform_(*self.scale)
+
+        new_center_hori = (1 - new_half_width) * torch.rand(N, device=device)
+        new_center_vert = (1 - new_half_height) * torch.rand(N, device=device)
+
+        crop = torch.zeros(N, 3, 3, device=device)
+        crop[:, 0, 0] = 1 / new_half_width
+        crop[:, 1, 1] = 1 / new_half_height
+        crop[:, 0, 2] = new_center_hori
+        crop[:, 1, 2] = new_center_vert
+        crop[:, 2, 2] = 1
+        return crop
+
+    def get_crop_matrix_torchvision(
+        self, N: int, device: torch.device, image: TensorOrTensorList
+    ) -> Tensor:
+        if isinstance(image, List):
+            image = image[0]
+        lrtbs = []
+
+        for _ in range(N):
+            i, j, h, w = TVT.RandomResizedCrop.get_params(image, self.scale, self.ratio)
+            lrtbs.append((j, j + w, i, i + h))
+
+        lrtb = torch.tensor(lrtbs, device=device)
+
+        flat_affine = utils.crop_to_affine(lrtb, normalized=False, image_shape=image.shape[-2:])
+        crop = utils.intrinsics_matrix_from_flat_intrinsics(flat_affine)
+        return crop
+
+    def forward(
+        self,
+        image: TensorOrTensorList,
+        camera: cameras.TensorDictionaryAffineCamera,
+        to_world: Optional[Tensor] = None,
+    ):
+        """
+        Args:
+            image: (batch, views, c, h, w)  or list of (batch, views, c, h, w)
+            camera: (batch, views)
+            to_world: (batch, views, 4, 4) needed when using world flipping
+
+        Returns:
+            new_image: (batch, views, c, h, w)  or list of (batch, views, c, h, w)
+            new_camera: (batch, views)
+            new_to_world: (batch, views, 4, 4)
+            valid_mask: (batch, views, h, w)
+        """
+        if to_world is None and self.world_flip:
+            raise RuntimeError("Must include a world matrix")
+
+        if to_world is not None:
+            new_to_world = to_world.clone()
+        else:
+            new_to_world = None
+
+        device = camera.device
+        b, views = camera.shape
+
+        new_camera = camera
+
+        if self.flip_probability > 0.0:
+            flip = 2 * (torch.rand(b, device=device) > self.flip_probability).float() - 1
+
+            flip3 = torch.eye(3, device=device).unsqueeze(0).unsqueeze(0).repeat(b, views, 1, 1)
+            flip3[:, :, 0, 0] = flip.reshape(-1, 1)
+
+            new_camera = new_camera.affine_transform(flip3)
+            if self.world_flip:
+                new_camera = new_camera.affine_transform(flip3, multiply_on_right=True)
+                # conjugate to_world by flip4
+                new_to_world[:, :, 0, :] *= flip.reshape(-1, 1, 1)
+                new_to_world[:, :, :, 0] *= flip.reshape(-1, 1, 1)
+        else:
+            flip3 = torch.eye(3, device=device).reshape(1, 1, 3, 3).repeat(b, views, 1, 1)
+
+        if self.share_crop_across_frames:
+            crop_matrix = self.get_crop_matrix(b, device, image).unsqueeze(1).expand(b, views, 3, 3)
+        else:
+            crop_matrix = self.get_crop_matrix(b * views, device, image).reshape(b, views, 3, 3)
+
+        new_camera = new_camera.affine_transform(crop_matrix)
+
+        crop_matrix = torch.bmm(crop_matrix.flatten(0, 1), flip3.flatten(0, 1)).unflatten(
+            0, (b, views)
+        )
+
+        new_image, valid = affine_transform_image(
+            image,
+            crop_matrix,
+            interp_mode=self.interp_mode,
+            out_shape=self.out_shape,
+            padding_mode=self.padding_mode,
+        )
+
+        return new_image, new_camera, new_to_world, valid

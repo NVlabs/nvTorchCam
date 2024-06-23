@@ -479,6 +479,7 @@ mvsnet_fusion
 stereo_rectify
 make_cost_volume_synthetic_sphere
 make_cost_volume_sphere_sweep_erp
+random_crop_flip
 ```
 
 To run examples:

@@ -470,6 +470,116 @@ def example_make_cost_volume_sphere_sweep_erp():
                     dist_hypotheses[dh, 0, 0]), im)
 
 
+def example_random_crop_flip():
+    """ Demonstrate random crop and flip module """
+    out_dir = os.path.join(examples_output, 'random_crop_flip')
+    os.makedirs(out_dir, exist_ok=True)
+
+    #load example views
+    images = []
+    to_worlds = []
+    depths = []
+    cameras = []
+    for i in range(0, 3):
+        im, depth, to_world, cam = load_scannet_example(view_num=i)
+        images.append(im)
+        depths.append(depth)
+        to_worlds.append(to_world)
+        cameras.append(cam)
+
+    images = torch.stack(images).unsqueeze(0)
+    depths = torch.stack(depths).unsqueeze(0)
+    to_worlds = torch.stack(to_worlds).unsqueeze(0)
+    cameras = torch.stack(cameras).unsqueeze(0)
+
+    def save_images_depths_point_clouds(path, images, depths, to_worlds, cameras):
+        os.makedirs(path, exist_ok=True)
+        for b in range(images.size(0)):
+            for i in range(images.size(1)):
+                write_image(os.path.join(path, 'image_batch_%d_view_%d.jpg' % (b,i)), images[b,i])
+                write_image(os.path.join(path, 'depth_batch_%d_view_%d.jpg' % (b,i)), depths[b,i]/5)
+                save_pointcloud(os.path.join(path, 'pc_batch_%d_view_%d.ply' % (b,i)), 
+                                images[b,i], 
+                                depths[b,i], to_worlds[b,i], 
+                                cameras[b,i], 
+                                False)
+
+    def demonstate_random_resize_crop_by_params(out_folder, rrcf_params):
+        #demonstrate world flipping
+        rrcf = warpings.RandomResizedCropFlip(**rrcf_params)
+    
+        new_images_depths, new_camera, new_to_world, _ = rrcf([images, depths], cameras, to_world=to_worlds)
+        new_images = new_images_depths[0]
+        new_depths = new_images_depths[1]
+        new_to_worlds = new_to_world
+        new_cameras = new_camera
+        save_images_depths_point_clouds(out_folder, new_images, new_depths, new_to_worlds, new_cameras)
+
+    #save originals and unprojected pointclouds
+    save_images_depths_point_clouds(os.path.join(out_dir, 'original'), images, depths, to_worlds, cameras)
+    
+    #demonstrate flipping with world flipping
+    out_folder = os.path.join(out_dir, 'flipped_world')
+    params = {'scale': (1.0,1.0),
+              'ratio': (1.0,1.0),
+              'flip_probability': 1.0,
+              'mode': 'width_aspect',
+              'share_crop_across_views': True,
+              'interp_mode': ['bilinear','nearest'],
+              'world_flip': True,
+              'out_shape': None}
+    demonstate_random_resize_crop_by_params(out_folder, params)
+
+
+    #demonstrate flipping without world flipping 
+    out_folder = os.path.join(out_dir, 'flipped_without_world')
+    params = {'scale': (1.0,1.0),
+              'ratio': (1.0,1.0),
+              'flip_probability': 1.0,
+              'mode': 'width_aspect',
+              'share_crop_across_views': True,
+              'interp_mode': ['bilinear','nearest'],
+              'world_flip': False,
+              'out_shape': None}
+    demonstate_random_resize_crop_by_params(out_folder, params)
+
+    #demonstrate share_crop_across_views=True
+    out_folder = os.path.join(out_dir, 'shared_cropping')
+    params = {'scale': (0.5,0.5),
+              'ratio': (1.0,1.0),
+              'flip_probability': 0.0,
+              'mode': 'width_aspect',
+              'share_crop_across_views': True,
+              'interp_mode': ['bilinear','nearest'],
+              'world_flip': False,
+              'out_shape': None}
+    demonstate_random_resize_crop_by_params(out_folder, params)
+
+    #demonstrate share_crop_across_views=False
+    out_folder = os.path.join(out_dir, 'not_shared_cropping')
+    params = {'scale': (0.5,0.5),
+              'ratio': (1.0,1.0),
+              'flip_probability': 0.0,
+              'mode': 'width_aspect',
+              'share_crop_across_views': False,
+              'interp_mode': ['bilinear','nearest'],
+              'world_flip': False,
+              'out_shape': None}
+    demonstate_random_resize_crop_by_params(out_folder, params)
+
+    #demonstrate torchvision cropping
+    out_folder = os.path.join(out_dir, 'torchvision')
+    params = {'scale': (0.08, 1.0),
+              'ratio': (3/4, 4/3),
+              'flip_probability': 0.0,
+              'mode': 'torchvision',
+              'share_crop_across_views': False,
+              'interp_mode': ['bilinear','nearest'],
+              'world_flip': True,
+              'out_shape': None}
+    demonstate_random_resize_crop_by_params(out_folder, params)
+
+
 def list_available_examples():
     print("Available example names:")
     for name in function_mapping.keys():
@@ -486,7 +596,8 @@ if __name__ == '__main__':
         'mvsnet_fusion': example_mvsnet_fusion,
         'stereo_rectify': example_stereo_rectify,
         'make_cost_volume_synthetic_sphere': example_make_cost_volume_synthetic_sphere,
-        'make_cost_volume_sphere_sweep_erp': example_make_cost_volume_sphere_sweep_erp
+        'make_cost_volume_sphere_sweep_erp': example_make_cost_volume_sphere_sweep_erp,
+        'random_crop_flip': example_random_crop_flip
     }
 
     parser = argparse.ArgumentParser(
