@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: CC-BY-NC-SA-4.0
+#
+# This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike
+# 4.0 International License. https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 """Functional implementation of cameras project_to_pixel and pixel_to_ray functions."""
 
 from typing import Optional, Dict, Tuple, Union, Any, List
