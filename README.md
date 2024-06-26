@@ -473,6 +473,20 @@ First, download the example data from the following link:
 
 [Download Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA/view?usp=drive_link) (20MB)
 
+This example data is from the following datasets:
+
+- **ScanNet** [6]. We thank the authors of the ScanNet dataset for their permission to use these few examples.
+
+- **Matterport360** [7]. Matterport360 is licensed under the [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/). We redistribute a couple unchanged images here. We also acknowledge the original Matterport dataset [8].
+
+##### Attribution Details for Matterport
+
+- **Name of the creators**: Manuel Rey-Area, Mingze Yuan, and Christian Richardt.
+- **Copyright notice**: "© 2022 Manuel Rey-Area, Mingze Yuan, and Christian Richardt."
+- **License notice**: "Licensed under the Creative Commons Attribution 4.0 International License."
+- **Link to original**: [Matterport360](https://researchdata.bath.ac.uk/1126/).
+
+
 ### Step 2: Untar the Example Data
 
 Untar the example data in the "example_scripts" directory
@@ -537,3 +551,9 @@ Tested with
 4. Daniel Lichy, Hang Su, Abhishek Badki, Jan Kautz, and Orazio Gallo. "FoVA-Depth: Field-of-View Agnostic Depth Estimation for Cross-Dataset Generalization." 3DV, 2024.
 
 5. Johannes Schönberger et al. "Colmap." Available at: [https://github.com/colmap/colmap](https://github.com/colmap/colmap).
+
+6. Angela Dai, Angel X. Chang, Manolis Savva, Maciej Halber, Thomas Funkhouser, and Matthias Nießner. "ScanNet: Richly-annotated 3D Reconstructions of Indoor Scenes." CVPR, 2017.
+
+7. Manuel Rey-Area, Mingze Yuan, and Christian Richardt. "360MonoDepth: High-Resolution 360° Monocular Depth Estimation." CVPR, 2022.
+
+8. Angel Chang, Angela Dai, Thomas Funkhouser, Maciej Halber, Matthias Niessner, Manolis Savva, Shuran Song, Andy Zeng, and Yinda Zhang. "Matterport3D: Learning from RGB-D Data in Indoor Environments." 3DV, 2017.
