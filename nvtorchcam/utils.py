@@ -36,6 +36,7 @@ def transform_infer_batch_group(func):
     """Transform function taking (b, i, j) x (b, g, k) -> (b, g, k) to a function taking
     (b*, i, j) x (b*, g*, k) -> (b*, g*, k)
     """
+
     def flatten_unflatten(A, x, **kwargs):
         batch_shape = A.shape[:-2]
         assert x.shape[: len(batch_shape)] == batch_shape
@@ -122,7 +123,7 @@ def samples_from_image(
     return_in_image_mask: bool = False,
     padding_mode: str = "zeros",
 ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-    """Interpolate a batch of images at point locations pts. If return_in_image_mask = True also 
+    """Interpolate a batch of images at point locations pts. If return_in_image_mask = True also
     return a mask indicated which pixels are within the image bounds
 
     Args:
@@ -335,7 +336,7 @@ def pixel_pts_from_normalized_pts(pts: Tensor, image_shape: Tuple[int, int]) -> 
 
 
 def flat_intrinsics_from_intrinsics_matrix(K: Tensor) -> Tensor:
-    """Converts 3x3 intrinsics matrix to flat representation see 
+    """Converts 3x3 intrinsics matrix to flat representation see
     intrinsics_matrix_from_flat_intrinsics
 
     Args:
@@ -442,10 +443,10 @@ def compute_jacobian(f, x, *theta):
 
 def fit_polynomial(x: Tensor, y: Tensor, degree: int) -> Tensor:
     """Fit a polynomial given a number of (x,y) pairs
-    
+
     Args:
-        x:        (b, num_points) 
-        y:        (b, num_points) 
+        x:        (b, num_points)
+        y:        (b, num_points)
         degree:   degree of polynomial to fit
     Returns:
         out:           (b, degree+1)
@@ -464,11 +465,11 @@ def apply_poly(coeffs: Tensor, vals: Tensor) -> Tensor:
     """Apply a batch of polynomials to batches of groups of numbers
 
     formally:
-    out[b,i] = coeffs[b,0] * vals[b,:]**0 + coeffs[b,1] * vals[b,:]**1 + ... 
+    out[b,i] = coeffs[b,0] * vals[b,:]**0 + coeffs[b,1] * vals[b,:]**1 + ...
                    + coeffs[b,k-1] * vals[b,:]**(k-1)
     Args:
-        coeffs:        (b, k) 
-        val:           (b, n) 
+        coeffs:        (b, k)
+        val:           (b, n)
     Returns:
         out:           (b, n)
     """
@@ -480,11 +481,11 @@ def apply_poly(coeffs: Tensor, vals: Tensor) -> Tensor:
 
 
 def crop_to_affine(lrtb: Tensor, normalized: bool = True, image_shape: Tuple[int, int] = None):
-    """Given the 4 corners of a box as a tensor lrtb = left, right, top, bottom return the 
+    """Given the 4 corners of a box as a tensor lrtb = left, right, top, bottom return the
     corresponding affine transform
-    
+
     Args:
-        lrtb: (b*, 4) 
+        lrtb: (b*, 4)
         normalized: bool, whether 4 corners are in normalized image coordinates
         image_shape: needed when not using normalized coordinates
     Returns:

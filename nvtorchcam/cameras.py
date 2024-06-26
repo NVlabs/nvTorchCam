@@ -151,7 +151,7 @@ class CameraBase:
     def unproject_depth(
         self, depth: Tensor, to_world: Optional[Tensor] = None, depth_is_along_ray: bool = False
     ):
-        """Unproject *depthmaps_per_camera to pointcloud images. Optionally transform pointcloud 
+        """Unproject *depthmaps_per_camera to pointcloud images. Optionally transform pointcloud
         images to world coordinates.
 
         Args:
@@ -333,7 +333,7 @@ class TensorDictionaryCamera(CameraBase):
 
     def __getattr__(self, name: str) -> Tensor:
         """Allow users to access self._values and self._shared_attributes with . operator."""
-        if name == '_values':
+        if name == "_values":
             raise AttributeError("necessary for loading with multiple workers?")
         if name in self._values:
             return self._values[name]
@@ -359,7 +359,7 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
 
     def affine_transform(self, affine: Tensor, multiply_on_right: bool = False):
         """Multiply intrinsics on the left by an affine transformation. Supports multiplying on the
-        right with flag multiply_on_right which is needed for mirroring images and the entire world 
+        right with flag multiply_on_right which is needed for mirroring images and the entire world
         as an augmentation.
 
         Args:
@@ -477,7 +477,7 @@ class EquirectangularCamera(TensorDictionaryAffineCamera):
     ):
         """Make an equirectangular camera.
 
-        Creation options: 
+        Creation options:
             0. Set intrinsics (a.k.a) affine transform directly and infer batch from it
             1. phi_range and theta_range are pairs and batch_shape is a tuple
             2. Set phi_range and theta_range as tensors of shape (*b, 2)
@@ -869,8 +869,8 @@ class _HeterogeneousCamera(CameraBase):
     def __init__(
         self, my_dict: Dict[CameraBase, Tuple[Tensor, CameraBase]], shape: Tuple[int, ...]
     ):
-        # keys are camera type, values are tuples of 
-        #(tensor representing linear index, and array of camera of k type)
+        # keys are camera type, values are tuples of
+        # (tensor representing linear index, and array of camera of k type)
         self.my_dict = my_dict
         self._shape = torch.Size(shape)
         key = next(iter(my_dict.keys()))

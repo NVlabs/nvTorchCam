@@ -13,23 +13,25 @@ from torch import Tensor
 from nvtorchcam import utils
 from nvtorchcam.diff_newton_inverse import DifferentiableNewtonInverse
 
-__all__ = ["orthographic_camera_project_to_pixel",
-           "orthographic_camera_pixel_to_ray",
-           "pinhole_camera_project_to_pixel",
-           "pinhole_camera_pixel_to_ray",
-           "equirectangular_camera_project_to_pixel",
-           "equirectangular_camera_pixel_to_ray",
-           "opencv_fisheye_camera_project_to_pixel",
-           "opencv_fisheye_camera_pixel_to_ray",
-           "opencv_camera_project_to_pixel",
-           "opencv_camera_pixel_to_ray",
-           "backward_forward_polynomial_fisheye_camera_project_to_pixel",
-           "backward_forward_polynomial_fisheye_camera_pixel_to_ray",
-           "kitti360_fisheye_camera_project_to_pixel",
-           "kitti360_fisheye_camera_pixel_to_ray",
-           "cube_camera_project_to_pixel",
-           "cube_camera_pixel_to_ray"
-           ]
+__all__ = [
+    "orthographic_camera_project_to_pixel",
+    "orthographic_camera_pixel_to_ray",
+    "pinhole_camera_project_to_pixel",
+    "pinhole_camera_pixel_to_ray",
+    "equirectangular_camera_project_to_pixel",
+    "equirectangular_camera_pixel_to_ray",
+    "opencv_fisheye_camera_project_to_pixel",
+    "opencv_fisheye_camera_pixel_to_ray",
+    "opencv_camera_project_to_pixel",
+    "opencv_camera_pixel_to_ray",
+    "backward_forward_polynomial_fisheye_camera_project_to_pixel",
+    "backward_forward_polynomial_fisheye_camera_pixel_to_ray",
+    "kitti360_fisheye_camera_project_to_pixel",
+    "kitti360_fisheye_camera_pixel_to_ray",
+    "cube_camera_project_to_pixel",
+    "cube_camera_pixel_to_ray",
+]
+
 
 def camera_infer_batch_group(func):
     """
@@ -191,7 +193,7 @@ def pinhole_camera_pixel_to_ray(
 def equirectangular_camera_project_to_pixel(
     flat_intrinsics: Tensor, distance_min: Tensor, pts: Tensor, depth_is_along_ray: bool = False
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """Equirectangular camera projection function. Points are marked valid if 
+    """Equirectangular camera projection function. Points are marked valid if
     point has distance value > distance_min.
 
     Args:
@@ -224,7 +226,7 @@ def equirectangular_camera_project_to_pixel(
 def equirectangular_camera_pixel_to_ray(
     flat_intrinsics: Tensor, pix: Tensor, restrict_valid_rays=True, unit_vec: bool = False
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """Equirectangular camera pixel_to_ray function. If restrict_valid_rays=False all pixels are 
+    """Equirectangular camera pixel_to_ray function. If restrict_valid_rays=False all pixels are
     marked valid, otherwise only pixels with angles in [-pi,pi] x [0, pi] are valid.
 
     If restrict_valid_rays=False multiple pixels may correspond to the same ray.
@@ -271,9 +273,9 @@ def opencv_fisheye_camera_project_to_pixel(
     pts: Tensor,
     depth_is_along_ray: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """OpenCV fisheye camera projection function. Points are marked valid if they have 
+    """OpenCV fisheye camera projection function. Points are marked valid if they have
     distance > distance_min and they make an angle with the camera axis of less than theta_max.
-    
+
     Args:
         flat_intrinsics: (*batch_shape, 4)
         distortion_coeffs: (*batch_shape, 4)
@@ -434,7 +436,7 @@ def opencv_camera_pixel_to_ray(
     unit_vec: bool = False,
     num_iters: int = 20,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """OpenCV camera pixel to ray function. All pixels are marked valid. 
+    """OpenCV camera pixel to ray function. All pixels are marked valid.
 
     Args:
         flat_intrinsics: (*batch_shape, 4)
@@ -504,9 +506,9 @@ def backward_forward_polynomial_fisheye_camera_project_to_pixel(
     pts: Tensor,
     depth_is_along_ray: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """BackwardForwardPolynomial fisheye camera projection function. Points are marked valid if 
-    they have distance > distance_min and they make an angle with the camera axis of less than 
-    theta_max. Model is similar to opencv fisheye except it accepts arbitrary degree polynomials 
+    """BackwardForwardPolynomial fisheye camera projection function. Points are marked valid if
+    they have distance > distance_min and they make an angle with the camera axis of less than
+    theta_max. Model is similar to opencv fisheye except it accepts arbitrary degree polynomials
     and requires a user specified backward polynomial for pixel to ray.
 
     Args:
@@ -603,9 +605,9 @@ def kitti360_fisheye_camera_project_to_pixel(
     pts: Tensor,
     depth_is_along_ray: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """KITTI360 fisheye camera projection function. Points are marked valid if they have 
+    """KITTI360 fisheye camera projection function. Points are marked valid if they have
     distance > distance_min and they make an angle with the camera axis of less than theta_max.
-    
+
     First projects point onto a unit sphere at the camera origin, then projects point on the sphere
     to a two parameter distorted pinhole camera with optical center located at (0,0,-xi). Assertion
     error if theta_max > arccos(-1/xi), since points making an angle greater than arccos(-1/xi) are
@@ -627,7 +629,7 @@ def kitti360_fisheye_camera_project_to_pixel(
     """
 
     cos_theta_max = torch.cos(theta_max)
-    assert torch.all(cos_theta_max > -1/xi)
+    assert torch.all(cos_theta_max > -1 / xi)
 
     pts_n = F.normalize(pts, dim=-1)
     distance = torch.norm(pts, dim=-1)
@@ -661,7 +663,7 @@ def kitti360_fisheye_camera_pixel_to_ray(
     unit_vec: bool = False,
     num_iters: int = 20,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    """KITTI360 fisheye camera pixel_to_ray function. Valid if pixels are in the disk corresponding 
+    """KITTI360 fisheye camera pixel_to_ray function. Valid if pixels are in the disk corresponding
     to rays with angles < theta_max.
 
     Shoot a ray from a two parameter distorted pinhole camera located at (0,0,-xi) toward the unit
@@ -684,11 +686,10 @@ def kitti360_fisheye_camera_pixel_to_ray(
     """
 
     cos_theta_max = torch.cos(theta_max)
-    assert torch.all(cos_theta_max > -1/xi)
+    assert torch.all(cos_theta_max > -1 / xi)
     sin_theta_max = torch.sin(theta_max)
-    r_max = sin_theta_max/ (xi + cos_theta_max)
+    r_max = sin_theta_max / (xi + cos_theta_max)
     r_d_max = kitti360_fisheye_distortion(ks, r_max.unsqueeze(1)).squeeze(1)
-    
 
     f1_f2 = flat_intrinsics[:, None, 0:2]
     c1_c2 = flat_intrinsics[:, None, 2:4]

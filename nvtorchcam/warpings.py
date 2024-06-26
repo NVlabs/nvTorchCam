@@ -648,15 +648,15 @@ class RandomResizedCropFlip(nn.Module):
         out_shape: Optional[Tuple[int, int]] = None,
     ):
         """
-        Randomly crop (and possibly flip) a batch of scene views, adjust camera intrinsics, and rescale 
+        Randomly crop (and possibly flip) a batch of scene views, adjust camera intrinsics, and rescale
         to out_shape.
 
-        If mode == 'torchvision', the crop is based on torchvision's RandomResizedCrop algorithm. See 
+        If mode == 'torchvision', the crop is based on torchvision's RandomResizedCrop algorithm. See
         torchvision's documentation for scale and ratio definitions.
 
-        If mode == 'width_aspect', the crop is selected by choosing a uniform number w in scale, which 
-        is the fraction of the original image width for the crop. Then, a uniform number r in ratio is 
-        chosen, and w/r is the fraction of the original height in the crop. Finally, a random position 
+        If mode == 'width_aspect', the crop is selected by choosing a uniform number w in scale, which
+        is the fraction of the original image width for the crop. Then, a uniform number r in ratio is
+        chosen, and w/r is the fraction of the original height in the crop. Finally, a random position
         for this box location is chosen.
 
         Args:
@@ -668,7 +668,7 @@ class RandomResizedCropFlip(nn.Module):
             interp_mode: Method of interpolation.
             padding_mode: Padding mode for "uncrops".
             share_crop_across_views: Whether to use the same crop for each view of the same scene.
-            world_flip: Whether to flip to_world matrices during horizontal flip so the world is 
+            world_flip: Whether to flip to_world matrices during horizontal flip so the world is
                         flipped and focal lengths stay positive.
             out_shape: Height and width of output tensor. If None, equal to input height and width.
         """
