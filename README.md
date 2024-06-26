@@ -34,11 +34,34 @@ Additionally, the library facilitates consistent data loading across various cam
 
 ## Installation
 
-Install the [dependencies](#dependencies).
+### Clone the Repository
+Clone the repo and navigate to the project root.
 
-Clone the repo and run `pip install .` from the project root. Run `pip install -e .` to install in development mode.
+### Basic Installation
+To install the package with minimal dependencies, run:
+```bash
+pip install .
+```
 
-Run tests with `bash run_test.sh`.
+### Optional Dependencies
+- **Cubemap Interpolation**: To install with `nvdiffrast` for cubemap interpolation, run:
+```bash
+pip install .[cubemap]
+```
+- **Examples and Testing**: To install dependencies for testing and running examples, run:
+```bash
+pip install .[examples_test]
+```
+- **All Dependencies**: To install all optional dependencies, run:
+```bash
+pip install .[all]
+```
+
+### Running Tests
+Tests can be run with:
+```bash
+bash run_test.sh
+```
 
 ## Usage Introduction
 

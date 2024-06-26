@@ -3,9 +3,36 @@ from setuptools import setup, find_packages
 setup(
     name="nvtorchcam",
     version="0.1",
+    author='Daniel Lichy',
+    author_email='dlichy@umd.edu',
+    url='https://github.com/NVlabs/nvTorchCam',
     packages=find_packages(),
     install_requires=[
-        # List your library dependencies here. For example:
-        # 'requests',
+        'torch>=2.0.0',
+        'torchvision>=0.15.0',
     ],
+    extras_require={
+        'cubemap': [
+            'nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git',
+        ],
+        'examples_tests': [
+            'plyfile==1.0',      
+            'imageio>=2.31.1', 
+            'opencv-python',
+            'scipy',  
+        ],
+        'all': [
+            'nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git',
+            'plyfile==1.0',
+            'imageio==2.31.1',
+            'opencv-python',
+            'scipy',
+        ]
+    },
+    classifiers=[
+        'Programming Language :: Python :: 3',
+        'License :: OSI Approved :: MIT License',
+        'Operating System :: OS Independent',
+    ],
+    python_requires='>=3.6',
 )

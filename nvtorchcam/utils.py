@@ -167,10 +167,15 @@ def samples_from_cubemap(cubemap: Tensor, pts: Tensor, mode: str = "bilinear") -
         Returns:
             values: (*batch_shape, channels, *group_shape)
     """
+    try:
+        import nvdiffrast.torch as dr
+    except ImportError as exc:
+        raise ImportError(
+            "The 'nvdiffrast' package is required for this functionality. "
+            "Please install it using: pip install .[cubemap]"
+        ) from exc
     if mode == "bilinear":
         mode = "linear"
-    import nvdiffrast.torch as dr
-
     batch_shape = cubemap.shape[:-3]
     group_shape, batch_numel = _get_group_shape(batch_shape, pts.shape[:-1])
 
