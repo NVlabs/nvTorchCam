@@ -21,6 +21,7 @@
   - [Warping](#4-warping)
 - [Running Examples](#running-examples)
 - [References](#references)
+- [Citation](#citation)
     
 
 ## Purpose
@@ -469,8 +470,8 @@ Example results will be in the directory "examples_output".
 If you find this code useful for your project, please consider citing:
 ```bibtex
 @misc{nvtorchcam,
-author =   {Lichy, Daniel and Su, Hang and Badki, Abhishek and Kautz, Jan and Gallo, Orazio},
-title =    {{nvTorchCam}: {A} Camera-Agnostic Library for {3D} Vision},
+author = {Lichy, Daniel and Su, Hang and Badki, Abhishek and Kautz, Jan and Gallo, Orazio},
+title = {{nvTorchCam}: {A} Camera-Agnostic Library for {3D} Vision},
 howpublished = {\url{https://github.com/NVlabs/nvTorchCam}},
 year = {2024}
 }
