@@ -4,23 +4,22 @@
 ## Table of Contents
 - [Purpose](#purpose)
 - [Installation](#installation)
-- [Usage Introduction](#usage-introduction)
-  - [Notation and Inferred Batch Size](#0-notation-and-inferred-batch-size)
-  - [Camera Models](#1-camera-models)
-    - [Available Camera Models](#available-camera-models)
-    - [Creating Cameras](#creating-cameras)
-    - [Essential Camera Functions](#essential-camera-functions)
-    - [Tensor-like Properties](#tensor-like-properties)
-    - [Heterogeneous Camera Batches](#heterogeneous-camera-batches)
-    - [Stacking in Pytorch dataloaders](#stacking-in-pytorch-dataloaders)
-  - [Image coordinates, Cropping, and Interpolation](#2-image-coordinates-cropping-and-interpolation)
-    - [Normalized image coordinates](#normalized-image-coordinates)
-    - [Cubemap coordinates](#cubemap-coordinates)
-    - [TensorDictionaryAffineCamera & Cropping](#tensordictionaryaffinecamera--cropping)
-    - [Interpolation](#interpolation)
-  - [Warpings](#3-warpings)
+- [Usage](#usage)
+  - [Notation and Inferred Batch Size](#1-notation-and-inferred-batch-size)
+  - [Camera Models](#2-camera-models)
+    - [Supported Camera Models](#21-supported-camera-models)
+    - [Creating Cameras](#22-creating-cameras)
+    - [Essential Camera Functions](#23-essential-camera-functions)
+    - [Tensor-like Properties](#24-tensor-like-properties)
+    - [Heterogeneous Camera Batches](#25-heterogeneous-camera-batches)
+    - [Stacking in Pytorch dataloaders](#26-stacking-in-pytorch-dataloaders)
+  - [Image coordinates, Cropping, and Interpolation](#3-image-coordinates-cropping-and-interpolation)
+    - [Normalized image coordinates](#31-normalized-image-coordinates)
+    - [Cubemap coordinates](#32-cubemap-coordinates)
+    - [TensorDictionaryAffineCamera & Cropping](#33-tensordictionaryaffinecamera--cropping)
+    - [Interpolation](#34-interpolation)
+  - [Warping](#4-warping)
 - [Running Examples](#running-examples)
-- [Dependencies](#dependencies)
 - [References](#references)
     
 
@@ -28,44 +27,49 @@
 
 The purpose of this library is to facilitate the development of PyTorch models that leverage plane-sweep volumes (PSV) and related concepts such as sphere-sweep volumes or epipolar attention, in a way that is agnostic to the camera's projection model. This enables effortless transitions between camera models without modifying the network implementation. Originally designed for this flexibility, the library is also fully differentiable, allowing for other use cases such as optimizing camera parameters.
 
-A clear illustration of this library's utility can be seen in the comparison between casMVSNet [3] and 360MVSNet [1]. These methods share nearly identical methodology, their primary distinction lies in their implementation for different camera models: casMVSNet for the pinhole camera, and 360MVSNet for the Equirectangular panorama (ERP). With nvTorchCam, these two methods can effortlessly share implementation.
+A clear illustration of this library's utility can be seen in the comparison between casMVSNet [3] and 360MVSNet [1]. These methods share nearly identical methodology; their primary distinction lies in their implementation for different camera models: casMVSNet for the pinhole camera and 360MVSNet for the Equirectangular panorama (ERP). With nvTorchCam, these two methods can effortlessly share implementation.
 
 Additionally, the library facilitates consistent data loading across various camera models in PyTorch, alongside a suite of utilities for image warping tasks such as undistortion, cost-volume construction, and stereo rectification, including rectification of ERPs. It also introduces capabilities for MVS fusion inspired by [MVSNet Pytorch](https://github.com/xy-guo/MVSNet_pytorch/blob/master/eval.py), but generalized to work with any camera model and run on GPU.
 
 ## Installation
 
-### Clone the Repository
-Clone the repo and navigate to the project root.
+First, clone the repo and navigate to the project root. 
 
-### Basic Installation
-To install the package with minimal dependencies, run:
+This repo was tested with dependencies: 
+
+- torch                     2.2.1
+- nvdiffrast                0.3.1 (for cubemap operations)
+- plyfile                   1.0 (examples only)
+- imageio                   2.31.1 (examples only)
+- opencv-python             4.8.0.74 (examples and tests)
+
+We offer various installation options: 
+
+- **Basic Installation**. To install the package with minimal dependencies, run:
 ```bash
 pip install .
 ```
-
-### Optional Dependencies
-- **Cubemap Interpolation**: To install with `nvdiffrast` for cubemap interpolation, run:
+- **Cubemap Interpolation**. To install with `nvdiffrast` for cubemap interpolation, run:
 ```bash
 pip install .[cubemap]
 ```
-- **Examples and Testing**: To install dependencies for testing and running examples, run:
+- **Examples and Testing**. To install dependencies for testing and running examples, run:
 ```bash
 pip install .[examples_test]
 ```
-- **All Dependencies**: To install all optional dependencies, run:
+- **All Dependencies**. To install all optional dependencies, run:
 ```bash
 pip install .[all]
 ```
 
-### Running Tests
-Tests can be run with:
+After installation, tests can be run with:
 ```bash
 bash run_test.sh
 ```
 
-## Usage Introduction
+## Usage
 
-### 0. Notation and Inferred Batch Size
+### 1. Notation and Inferred Batch Size
 
 The library is designed to intelligently infer and handle tensor dimensions that resemble batches. This capability allows for efficient manipulation of data in both singular and batched forms. The process and its documentation are best illustrated through an example:
 
@@ -98,132 +102,49 @@ This capability enables the function to apply matrix transformations efficiently
 Most other functions and Camera objects have similar inferred batching capabilities and are documented similarly.
 
 
-### 1. Camera Models
-This library abstracts different camera models as objects that inherit from the `CameraBase` class. These camera objects encapsulate functionalities for 3D to 2D projections, ray casting from pixels, and obtaining camera rays among other features. For details of important camera functions input and output shapes please see the doc-strings for `CameraBase` functions: `pixel_to_ray`, `project_to_pixel`, `get_camera_rays`, and `unproject_depth`.
+### 2. Camera Models
+This library abstracts different camera models as objects that are inherited from the `CameraBase` class. These camera objects encapsulate functionalities for 3D to 2D projections, ray casting from pixels, and obtaining camera rays among other features. For details of important camera functions input and output shapes please see the doc-strings for `CameraBase` functions: `pixel_to_ray`, `project_to_pixel`, `get_camera_rays`, and `unproject_depth`.
 
-#### Available Camera Models
+#### 2.1 Supported Camera Models
 
 The library includes a variety of camera models: 
 
-- [PinholeCamera](#pinholecamera)
-- [OrthographicCamera](#orthographiccamera)
-- [OpenCVCamera](#opencvcamera)
-- [EquirectangularCamera](#equirectangularcamera)
-- [OpenCVFisheyeCamera](#opencvfisheyecamera)
-- [BackwardForwardPolynomialFisheyeCamera](#backwardforwardpolynomialfisheyecamera)
-- [Kitti360FisheyeCamera](#kitti360fisheyecamera)
-- [CubeCamera](#cubecamera)
+- `PinholeCamera`
+- `OrthographicCamera`
+- `OpenCVCamera`
+- `EquirectangularCamera`
+- `OpenCVFisheyeCamera]`
+- `BackwardForwardPolynomialFisheyeCamera`
+- `Kitti360FisheyeCamera`
+- `CubeCamera`
 
-In this part, we document the projection function (i.e. how `project_to_pixel` works) and parameters of each supported camera model. We denote the 3d point as (x, y, z) and the projected point on the sensor as (u, v), or (u, v, w) in the case of the cubemap. We also comment on how the inverse works (i.e. how `pixel_to_ray` works).
+In this part, we document the projection function (i.e., how `project_to_pixel` works) and the parameters of each supported camera model. We denote the 3D point as (x, y, z) and the projected point on the sensor as (u, v), or (u, v, w) in the case of the cubemap. We also comment on how the inverse works (i.e., how `pixel_to_ray` works).
 
-##### PinholeCamera
-Parameters: f0, f1, c0, c1
+| | Parameters | Projection  | Inverse |
+|----------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
+| `PinholeCamera` | $f_0, f_1, c_0, c_1$ | $u', v' = \frac{x}{z}, \frac{y}{z}$ <br> $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Analytic |
+| `OrthographicCamera` | $f_0, f_1, c_0, c_1$ | $u', v' = x, y$  <br>  $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Analytic |
+| `OpenCVCamera` | $f_0, f_1, c_0, c_1$ <br> $k_0, k_1, k_2, k_3$<br> $k_4, k_5, p_0, p_1$ | $x', y' = x/z, y/z$ <br> $r^2 = {x'}^2 + y'^2$ <br>  $D_{radial} = \frac{1 + k_0 r^2 + k_1 r^4 + k_2 r^6}{1 + k_3 r^2 + k_4 r^4 + k_5 r^6}$  <br> $u' = x' * D_{radial} + 2 p_0 x' y' + p_1(r^2 + 2 {x'}^2)$ <br>  $v' = y' * D_{radial} + p_0(r^2 + 2{y'}^2) + 2 p_1 x' y'$ <br>  $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Newton's Method to convert from $u',v'$ back to $x', y'$. |
+| `EquirectangularCamera`$^1$ | $f_0, f_1, c_0, c_1$   | $r = \sqrt{x^2 + y^2 + z^2}$ <br> $u' = acos(-\frac{y}{r})$ <br> $v' = atan2(x, z)$ <br> $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Analytic |
+| `OpenCVFisheyeCamera`$^2$ | $f_0, f_1, c_0, c_1$ <br> $k_0, k_1, k_2, k_3$ | $x', y', z' = \frac{x, y, z}{\sqrt{x^2 + y^2 + z^2}}$ <br> $\theta = acos(z')$ <br> $\theta_d = \theta (1 + k_0 \theta^2 + k_1 \theta^4 + k_2 \theta^6 + k_3 \theta^8)$ <br> $x'', y'' = \frac{x', y'}{\sqrt{x'^2 + y'^2}}$ <br> $u', v' = \theta_d (x'', y'')$ <br> $u, v = f_0 u' + c_0, f_1 v' + c_1$ <br>  | Newton's Method to convert $\theta_d$ to $\theta$. |
+| `BackwardForward`<br>`PolynomialFisheyeCamera`$^3$ | $f_0, f_1, c_0, c_1$ <br> $p_0, p_1 \dots p_N$ <br> $q_0, q_1 \dots q_M$ | $x', y', z' = \frac{x, y, z}{\sqrt{x^2 + y^2 + z^2}}$ <br> $\theta = acos(z')$ <br> $\theta_d = p_0 + p_1 \theta + p_2 \theta^2 \dots p_N \theta^N$ <br> $x'', y'' = \frac{x', y'}{\sqrt{{x'}^2 + {y'}^2}}$ <br> $u', v' = \theta_d x'', \theta_d y''$ <br> $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Calculated used a "backward polynomial": $\theta = q_0 + q_1 \theta_d + q_2 \theta_d^2 \dots  q_M \theta_d^M$. It is up to the user to specify this polynomial when the camera is instantiated such that it is an approximate inverse of the "forward polynomial": $p_0 + p_1 \theta + p_2 \theta^2 \dots p_N \theta^N$. |
+| `Kitti360FisheyeCamera` | $f_0, f_1, c_0, c_1$ <br> $k_0, k_1, x_i$ | $x', y', z' = \frac{x, y, z}{\sqrt{x^2 + y^2 + z^2}}$ <br> $x'', y'' = \frac{x'}{z' + x_i}, \frac{y'}{z' + x_i}$ <br> $r^2 = {x''}^2 + {y''}^2$ <br> $r_d^2 = 1 + k_0  r^2 + k_1 r^4$ <br> $u', v' = r_d^2 x'', r_d^2 y''$ <br> $u, v = f_0 u' + c_0, f_1 v' + c_1$ | Newton's Method for $r^2$ back to $r_d^2$, rest is analytic. |
+| `CubeCamera` | -  | $u, v, w = \frac{x, y, z}{\|x,y,z\|_{inf}}$ if `depth_is_along_ray` = False <br> $u, v, w = \frac{x, y, z}{\|x,y,z\|_2}$ if `depth_is_along_ray` = True | Analytic |
 
-Projection Def:  
-u', v' = x/z, y/z  
-u, v = f0u' + c0, f1v' + c1  
-
-Inverse: Analytic
-
-
-##### OrthographicCamera
-Parameters: f0, f1, c0, c1
-
-Projection Def:  
-u', v' = x, y  
-u, v = f0u' + c0, f1v' + c1
-
-Inverse: Analytic
-
-##### OpenCVCamera
-Parameters: f0, f1, c0, c1, k0, k1, k2, k3, k4, k5, p0, p1
-
-Projection Def:  
-x', y' = x/z, y/z  
-r^2 = x'^2 + y'^2  
-radial_dist = (1 + k0r^2 + k1r^4 + k2r^6)/(1 + k3r^2 + k4r^4 + k5r^6)  
-u' = x' * radial_dist + 2p0x'y' + p1(r^2 + 2x'^2)  
-v' = y' * radial_dist + p0(r^2 + 2y'^2) + 2p1x'y'  
-u, v = f0u' + c0, f1v' + c1  
-
-Inverse: Newton's Method to convert from  u',v' back to x', y'.
-
-##### EquirectangularCamera
-Parameters: f0, f1, c0, c1
-
-Projection Def:  
-r = sqrt(x^2 + y^2 + z^2)  
-u' = acos(-y / r)  
-v' = atan2(x, z)  
-u, v = f0u' + c0, f1v' + c1  
+Notes:
+1. Rather than setting the parameters $f_0, f_1, c_0, c_1$ when calling the camera's make function it may be more intuitive to specify angular ranges. You can do this in the make function by setting phi_range and theta_range rather than intrinsics. Then $f_0, f_1, c_0, c_1$ will be set as: <br>
+$\theta_{range} = (\theta_{min}, \theta_{max})$ <br>
+$\phi_{range} = (\phi_{min}, \phi_{max})$ <br>
+$f_0 = 2/(\phi_{max}-\phi_{min})$ <br>
+$f_1 = 2/(\theta_{max}-\theta_{min})$ <br>
+$c_0 = (\phi_{max} + \phi_{min})/(\phi_{max} - \phi_{min})$ <br>
+$c_1 = (\theta_{max} + \theta_{min})/(\theta_{max} - \theta_{min})$ <br>
+For full 360, $\phi_{min}=-\pi, \phi_{max}=\pi, \theta_{min}=0, \theta_{max}=\pi$.
+2. Our implementation is equivalent to the OpenCV formulation for points in front of the camera but is extended to work with points behind the camera; that is, it can work with cameras with a Field of View (FoV) greater than 180°.
+3. This camera is similar to `OpenCVFisheyeCamera` but handles arbitrary polynomials in the projection function represented by the coefficients $p_0\dots p_N$, and requires the user to specify a backward polynomial for converting pixels to rays. This polynomial inverse is potentially much faster than Newton's Method. Also, note if optimizing the camera's backward polynomial, the forward polynomial will NOT automatically update to remain an approximate inverse to the backward polynomial and vice versa.
 
 
-Inverse: Analytic  
-
-Notes: Rather than setting the parameters f0, f1, c0, c1 when calling the camera's make function it may be more intuitive to specify angular ranges. You can do this in the make function by setting phi_range and theta_range rather than intrinsics. Then f0, f1, c0, c1 will be set as
-
-theta_range = (theta_min, theta_max)  
-phi_range = (phi_min, phi_max)  
-f0 = 2/(phi_max-phi_min)  
-f1 = 2/(theta_max-theta_min)  
-c0 = (phi_max + phi_min)/(phi_max - phi_min)  
-c1 = (theta_max + theta_min)/(theta_max - theta_min)  
-
-For full 360 phi_min=-pi, phi_max=pi, theta_min=0, theta_max=pi  
-
-##### OpenCVFisheyeCamera
-Parameters: f0, f1, c0, c1, k0, k1, k2, k3
-
-Projection Def:  
-x', y', z' = x, y, z / sqrt(x^2 + y^2 + z^2)  
-theta = acos(z')  
-theta_d = theta * (1 + k0 * theta^2 + k1 * theta^4 + k2 * theta^6 + k3 * theta^8)  
-x'', y'' = x', y' / sqrt(x'^2 + y'^2)  
-u', v' = theta_d * (x'', y'')  
-u, v = f0u' + c0, f1v' + c1  
-
-Inverse: Newton's Method to convert theta_d to theta
-
-Notes: Our implementation is equivalent to the OpenCV formulation for points in front of the camera, but is extended to work with points behind the camera, that is it can work with cameras with a Field of View (FoV) greater than 180 degrees.
-
-##### BackwardForwardPolynomialFisheyeCamera
-Parameters: f0, f1, c0, c1, p0, p1, ..., pN, q0, q1, ..., qM
-
-Projection Def:  
-x', y', z' = (x, y, z) / sqrt(x^2 + y^2 + z^2)  
-theta = acos(z')  
-theta_d = p0 + p1 * theta + p2 * theta^2 + ... + pN * theta^N  
-x'', y'' = (x', y') / sqrt(x'^2 + y'^2)  
-u', v' = theta_d * (x'', y'')  
-u, v = f0u' + c0, f1v' + c1  
-
-Inverse: Calculated used a "backward polynomial": theta = q0 + q1 * theta_d + q2 * theta_d^2 + ... + qM * theta_d^M. It is up to the user to specify this polynomial when the camera is instantiated such that it is an approximate inverse of the "forward polynomial": p0 + p1 * theta + p2 * theta^2 + ... + pN * theta^N.
-
-Notes: This camera is similar to OpenCVFisheyeCamera but handles arbitrary polynomials in the projection function represented by the coefficients p0,...,pN, and requires the user to specify a backward polynomial for converting pixels to rays. This polynomial inverse is potentially much faster than Newton's Method. Also note if optimizing the camera's backward polynomial the forward polynomial with NOT automatically update to remain an approximate inverse to the backward polynomial and vise-versa. 
-
-##### Kitti360FisheyeCamera
-Parameters: f0, f1, c0, c1, k0, k1, xi
-
-Projection Def:  
-x', y', z' = (x, y, z) / sqrt(x^2 + y^2 + z^2)  
-x'', y'' = x' / (z' + x_i), y' / (z' + x_i)  
-r^2 = x''^2 + y''^2  
-r_d^2 = 1 + k0 * r^2 + k1 * r^4  
-u', v' = r_d^2 * (x'', y'')  
-u, v = f0u' + c0, f1v' + c1  
-
-Inverse: Newton's Method for r^2 back to r_d^2, rest analytic
-
-##### CubeCamera
-Parameters: None
-
-Projection Def:  
-(u, v, w) = (x, y, z)/||x,y,z||_inf    if depth_is_along_ray = False  
-(u, v, w) = (x, y, z)/||x,y,z||_2      if depth_is_along_ray = True  
-
-Inverse: Analytic
-
-#### Creating Cameras
+#### 2.2 Creating Cameras
 
 Cameras must be created via their static 'make' method e.g.
 ```python 
@@ -241,7 +162,7 @@ cameras also can be made with arbitrary batch shapes e.g.
 
 This creates a batch of orthographic cameras of shape (2,4).
 
-#### Essential Camera Functions
+#### 2.3 Essential Camera Functions
 The most essential functions of cameras are: `project_to_pixel`, `pixel_to_ray`. We give an example of these functions for the very simple orthographic camera model.
 
 Example: `project_to_pixel`
@@ -300,14 +221,14 @@ tensor([True, True, True])
 
 Please refer to the source code for useful camera functions such as: `get_camera_rays` and `unproject_depth`.
 
-#### Tensor-like Properties
+#### 2.4 Tensor-like Properties
 
 In addition to `.shape`, camera models support a number of other tensor-like operations such as: `shape`, `device`, `to`, `reshape`, `permute`, `transpose`, `squeeze`, `unsqueeze`, `expand`, `flip`, `detach` and `clone`. Tensor-slicing operations of cameras are also supported. Note that cameras may return views or copies of the original camera data.
 
-One can also get an iterator of the cameras parameters with the method `named_tensors.` This may be useful for setting which parameters `requires_grad`.
+One can also get an iterator of the camera parameters with the method `named_tensors.` This may be useful for setting which parameters `requires_grad`.
 
 
-#### Heterogeneous Camera Batches
+#### 2.5 Heterogeneous Camera Batches
 
 Heterogeneous batches of cameras (batches with multiple camera models) can be created using `torch.cat` and `torch.stack`, for example:
 
@@ -328,16 +249,16 @@ When slicing heterogeneous batches, the batch will devolve to homogeneous if app
    <class 'nvtorchcam.cameras.OrthographicCamera'>
 ```
 
-Note: `_HeterogeneousCamera` should not be created directly. Also note that CubeCamera objects cannot be used in heterogenous batches and will raise an error if they are concatenated with another type.
+Note: `_HeterogeneousCamera` should not be created directly. Also, note that CubeCamera objects cannot be used in heterogeneous batches and will raise an error if they are concatenated with another type.
 
-#### Stacking in Pytorch dataloaders
+#### 2.6 Stacking in Pytorch dataloaders
 
 When the library is imported, `CameraBase` objects are added to PyTorch's default `collate_fn`. This means that they can be returned just like tensors in `torch.utils.data.Dataset`'s `__getitem__` method and will be properly stacked, even if different dataset samples use different camera objects.
 
 
-## 2. Image coordinates, Cropping, and Interpolation
+### 3. Image coordinates, Cropping, and Interpolation
 
-### Normalized image coordinates
+#### 3.1 Normalized image coordinates
 This library uses normalized coordinates for image manipulation, similar to `torch.nn.functional.grid_sample` with `align_corners=False`. This approach allows for easy image resizing without changing camera intrinsics. However, adjusting intrinsics for cropping or padding becomes more complex so utility functions for this are explained [here](#tensordictionaryaffinecamera--cropping). Detailed documentation is provided in the following section. Coordinate conventions illustrated in the figure:
 
 ![](media/image_coords.png)
@@ -364,9 +285,9 @@ tensor([[-0.7500, -0.7500, -0.7500, -0.7500, -0.7500, -0.7500],
         [ 0.7500,  0.7500,  0.7500,  0.7500,  0.7500,  0.7500]])
 ```
 
-### Cubemap coordinates
+#### 3.2 Cubemap coordinates
 
-Cubemaps are treated as special image with shape `(*, 6width, width)`. Similarly to `utils.get_normalized_grid` we can get the cubemap pixel centers with the function `utils.get_normalized_grid_cubemap`. 
+Cubemaps are treated as special images with shape `(*, 6width, width)`. Similarly to `utils.get_normalized_grid` we can get the cubemap pixel centers with the function `utils.get_normalized_grid_cubemap`. 
 
 ```python
 >>> import nvtorchcam.utils as utils
@@ -413,9 +334,9 @@ tensor([[ 0.5000, -0.5000], #face0
         [-1.0000, -1.0000]])
 ```
 
-Note that pixel coordinates for the cubemap are 3 dimensional i.e. have shape `(*, 3)`.
+Note that pixel coordinates for the cubemap are 3 dimensional, i.e., have shape `(*, 3)`.
 
-### TensorDictionaryAffineCamera & Cropping
+#### 3.3 TensorDictionaryAffineCamera & Cropping
 
 Except for CubeCamera, all camera models inherit from TensorDictionaryAffineCamera, indicating that they have parameters: f0, f1, c0, c1 and the last step of their projection function is: u, v = f0u' + c0, f1v' + c1. For any camera model conforming to this structure, conversion to normalized intrinsics is necessary to use the `warpings` module. This conversion can be achieved using utility functions:
 
@@ -445,13 +366,13 @@ We can verify the correctness as follows:
 
 Images can be cropped directly using normalized coordinates, including fractional pixels through interpolation. For detailed guidance, refer to the implementations in `warpings.affine_transform_image`, `TensorDictionaryAffineCamera.affine_transform`, `warpings.crop_resize_image`, and `TensorDictionaryAffineCamera.crop`.
 
-### Interpolation
+#### 3.4 Interpolation
 
-Batches of images can be interpolated with the function `utils.samples_from_image`. All points to be interpolated are expected as normalized coordinates as this is just a wrapper of torch.nn.functional.grid_sample.
+Batches of images can be interpolated with the function `utils.samples_from_image`. All points to be interpolated are expected as normalized coordinates as this is just a wrapper of `torch.nn.functional.grid_sample`.
 
 Similarly, batches of cubemaps can be interpolated using `utils.sample_from_cubemap`, which is implemented with nvdiffrast. Note that the pixel coordinates for the cubemap are three-dimensional. They do not necessarily need to be on the unit cube but will be projected onto it by [nvdiffrast](https://github.com/NVlabs/nvdiffrast).
 
-## 3. Warpings
+### 4. Warping
 
 The `warpings` module is designed to work with cameras that project into normalized image coordinates. For cubemaps, it seamlessly integrates by utilizing `sample_from_cubemap` instead of `samples_from_image` when operating with CubeCameras.
 
@@ -471,13 +392,13 @@ For further information and practical examples, please consult `example_scripts/
 
 First, download the example data from the following link:
 
-[Download Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA/view?usp=drive_link) (20MB)
+[Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA/view?usp=drive_link) (20MB)
 
 This example data is from the following datasets:
 
 - **ScanNet** [6]. We thank the authors of the ScanNet dataset for their permission to use these few examples.
 
-- **Matterport360** [7]. Matterport360 is licensed under the [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/). We redistribute a couple unchanged images here. We also acknowledge the original Matterport dataset [8].
+- **Matterport360** [7]. Matterport360 is licensed under the [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/). We redistribute a couple of unchanged images here. We also acknowledge the original Matterport dataset [8].
 
 ##### Attribution Details for Matterport
 
@@ -524,21 +445,7 @@ To run examples:
 python example_scripts/examples.py <example_name>
 ```
 
-Example results will be in directory "examples_output"
-
-## Dependencies
-
-Tested with
-
-- torch                     2.2.1
-
-- nvdiffrast                0.3.1 (for cubemap operations)
-
-- plyfile                   1.0 (examples only)
-
-- imageio                   2.31.1 (examples only)
-
-- opencv-python             4.8.0.74 (examples and tests)
+Example results will be in the directory "examples_output".
 
 ## References
 
