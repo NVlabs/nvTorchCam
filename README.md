@@ -464,3 +464,14 @@ Example results will be in the directory "examples_output".
 7. Manuel Rey-Area, Mingze Yuan, and Christian Richardt. "360MonoDepth: High-Resolution 360° Monocular Depth Estimation." CVPR, 2022.
 
 8. Angel Chang, Angela Dai, Thomas Funkhouser, Maciej Halber, Matthias Niessner, Manolis Savva, Shuran Song, Andy Zeng, and Yinda Zhang. "Matterport3D: Learning from RGB-D Data in Indoor Environments." 3DV, 2017.
+
+## Citation
+If you find this code useful for your project, please consider citing:
+```bibtex
+@misc{nvtorchcam,
+author =   {Lichy, Daniel and Su, Hang and Badki, Abhishek and Kautz, Jan and Gallo, Orazio},
+title =    {{nvTorchCam}: {A} Camera-Agnostic Library for {3D} Vision},
+howpublished = {\url{https://github.com/NVlabs/nvTorchCam}},
+year = {2024}
+}
+```
