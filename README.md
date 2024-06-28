@@ -393,7 +393,7 @@ For further information and practical examples, please consult `example_scripts/
 
 First, download the example data from the following link:
 
-[Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA/view?usp=drive_link) (20MB)
+[Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA) (20MB)
 
 This example data is from the following datasets:
 
