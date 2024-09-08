@@ -294,7 +294,7 @@ def pixel_intrinsics_from_normalized_intrinsics(
         intrinsics: (*, 3, 3) or (*, 4)
     """
     if intrinsics_n.shape[-2:] == (3, 3):
-        intrinsics = flat_intrinsics_from_intrinsics_matrix(intrinsics)
+        intrinsics_n = flat_intrinsics_from_intrinsics_matrix(intrinsics_n)
         got_matrix_format = True
     elif intrinsics_n.shape[-1] == 4:
         got_matrix_format = False
