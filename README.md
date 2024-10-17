@@ -20,6 +20,7 @@
     - [Interpolation](#34-interpolation)
   - [Warping](#4-warping)
 - [Running Examples](#running-examples)
+- [FoVA-Depth: More Examples Using nvTorchCam](#fova-depth-more-examples-using-nvtorchcam)
 - [References](#references)
 - [Citation](#citation)
     
@@ -448,6 +449,10 @@ python example_scripts/examples.py <example_name>
 
 Example results will be in the directory "examples_output".
 
+## FoVA-Depth: More Examples Using nvTorchCam
+
+Looking for more usage examples, including multiview stereo for general cameras, dataloading, and augmentation? Be sure to check out our other project, [FoVA-Depth](https://github.com/NVlabs/fova-depth).
+
 ## References
 
 1. Ching-Ya Chiu, Yu-Ting Wu, I-Chao Shen, and Yung-Yu Chuang. "360MVSNet: Deep Multi-View Stereo Network with 360◦ Images for Indoor Scene Reconstruction." WACV, 2023.
@@ -471,8 +476,11 @@ If you find this code useful for your project, please consider citing:
 ```bibtex
 @misc{nvtorchcam,
 author = {Lichy, Daniel and Su, Hang and Badki, Abhishek and Kautz, Jan and Gallo, Orazio},
-title = {{nvTorchCam}: {A} Camera-Agnostic Library for {3D} Vision},
-howpublished = {\url{https://github.com/NVlabs/nvTorchCam}},
-year = {2024}
+title = {{nvTorchCam}: An Open-source Library for Camera-Agnostic Differentiable Geometric Vision},
+year={2024},
+eprint={2410.12074},
+archivePrefix={arXiv},
+primaryClass={cs.CV},
+url={https://arxiv.org/abs/2410.12074}
 }
 ```
