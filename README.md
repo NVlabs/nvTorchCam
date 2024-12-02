@@ -1,5 +1,8 @@
 
-# nvTorchCam
+# nvTorchCam: An Open-source Library for Camera-Agnostic Differentiable Geometric Vision
+nvTorchCam is a PyTorch library that supports differentiable geometric vision operations (plane-sweep volumes (PSV), sphere-sweep volumes, epipolar attention etc.) independently of the [camera model](#21-supported-camera-models).
+
+Please check out the [paper](https://arxiv.org/abs/2410.12074) for more details.
 
 ## Table of Contents
 - [Purpose](#purpose)
@@ -394,7 +397,7 @@ For further information and practical examples, please consult `example_scripts/
 
 First, download the example data from the following link:
 
-[Example Data](https://drive.google.com/file/d/1m67Lw0nWF8raE3NDQ8-jiecZkGB0mYoA) (20MB)
+[Example Data](https://drive.google.com/file/d/1jsQG3zd_1tlwbMpLmDf7iO4aUrXm7Oow) (20MB)
 
 This example data is from the following datasets:
 
