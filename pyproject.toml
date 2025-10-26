@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nvtorchcam"
+version = "0.1.0"
+description = "Camera-agnostic differentiable geometric vision utilities for PyTorch."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Daniel Lichy", email = "dlichy@umd.edu" }]
+urls = { "Homepage" = "https://github.com/NVlabs/nvTorchCam" }
+
+dependencies = [
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
+]
+
+[project.optional-dependencies]
+cubemap = [
+  "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git",
+]
+examples_tests = [
+  "plyfile==1.0",
+  "imageio>=2.31.1",
+  "opencv-python",
+  "scipy",
+]
+all = [
+  "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git",
+  "plyfile==1.0",
+  "imageio>=2.31.1",
+  "opencv-python",
+  "scipy",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nvtorchcam*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # allow public re-exports
+"tests/*" = ["F841"]
+"example_scripts/*" = ["F841"]
