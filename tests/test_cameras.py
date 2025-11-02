@@ -97,7 +97,6 @@ class TestCameras(unittest.TestCase):
 
     # @unittest.skip('Uncomment to skip this test')
     def test_orthographic_camera(self):
-
         flat_intrinsics = torch.tensor([[1, 1, 0.4, 0.5], [2, 2, -0.4, 0.5]])
         # even for negative z_min pinhole camera unproject is injective
         z_min = torch.ones(2) * (-10)
@@ -311,12 +310,12 @@ class TestCameras(unittest.TestCase):
         # unsqueeze
         assert camera.unsqueeze(0).shape == (1, 2)
         assert camera.unsqueeze(-1).shape == (2, 1)
-        assert type(camera.unsqueeze(0)) == cameras.PinholeCamera
+        assert isinstance(camera.unsqueeze(0), cameras.PinholeCamera)
 
         # expand
         camera_32 = camera.unsqueeze(0).expand(3, 2)
         assert camera_32.shape == (3, 2)
-        assert type(camera_32) == cameras.PinholeCamera
+        assert isinstance(camera_32, cameras.PinholeCamera)
         camera_32 = camera.unsqueeze(0).expand(3, -1)
         assert camera_32.shape == (3, 2)
         camera_32 = camera.unsqueeze(0).expand((3, -1))
@@ -346,7 +345,6 @@ class TestCameras(unittest.TestCase):
 
     # @unittest.skip('Uncomment to skip this test')
     def test_heterogeneous_batch_get_rays_and_project(self):
-
         pin_camera = cameras.PinholeCamera.make(
             intrinsics=torch.tensor([[1, 1, 0.4, 0.5], [2, 2.5, -0.4, 0.2]])
         )
@@ -569,7 +567,7 @@ class TestCameras(unittest.TestCase):
         hetero_camera = torch.cat((pin_camera, ortho_camera), dim=1)
 
         devolved_pin_camera = hetero_camera[:, 0:4]
-        assert type(devolved_pin_camera) == cameras.PinholeCamera
+        assert isinstance(devolved_pin_camera, cameras.PinholeCamera)
 
         for k in devolved_pin_camera._values.keys():
             torch.testing.assert_close(devolved_pin_camera._values[k], pin_camera._values[k])

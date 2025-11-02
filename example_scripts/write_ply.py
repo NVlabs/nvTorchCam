@@ -27,7 +27,6 @@ def write_ply(
     faces=None,
     as_text=False,
 ):
-
     # make vertex element
     if prop_types is None:
         prop_types = ["float32" for _ in prop_names]

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 import torch
-from typing import Optional, Dict, Tuple, Union, Any, Callable
+from typing import Tuple, Union
 from torch import Tensor
 
 __all__ = [
@@ -372,7 +372,7 @@ def intrinsics_matrix_from_flat_intrinsics(flat_intrinsics: Tensor) -> Tensor:
         3,
         3,
         device=flat_intrinsics.device,
-        dtype=flat_intrinsics.dtype
+        dtype=flat_intrinsics.dtype,
     )
     intrinsics_matrix[..., 0, 0] = flat_intrinsics[..., 0]
     intrinsics_matrix[..., 1, 1] = flat_intrinsics[..., 1]

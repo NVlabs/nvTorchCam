@@ -88,9 +88,7 @@ def read_dpt(dpt_file_path):
     ext = os.path.splitext(dpt_file_path)[1]
 
     assert len(ext) > 0, "readFlowFile: extension required in fname %s" % dpt_file_path
-    assert ext == ".dpt", exit(
-        "readFlowFile: fname %s should have extension " ".flo" "" % dpt_file_path
-    )
+    assert ext == ".dpt", exit("readFlowFile: fname %s should have extension .flo" % dpt_file_path)
 
     fid = None
     try:

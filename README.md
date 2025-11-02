@@ -26,7 +26,7 @@ Please check out the [paper](https://arxiv.org/abs/2410.12074) for more details.
 - [FoVA-Depth: More Examples Using nvTorchCam](#fova-depth-more-examples-using-nvtorchcam)
 - [References](#references)
 - [Citation](#citation)
-    
+
 
 ## Purpose
 
@@ -38,9 +38,9 @@ Additionally, the library facilitates consistent data loading across various cam
 
 ## Installation
 
-First, clone the repo and navigate to the project root. 
+First, clone the repo and navigate to the project root.
 
-This repo was tested with dependencies: 
+This repo was tested with dependencies:
 
 - torch                     2.2.1
 - nvdiffrast                0.3.1 (for cubemap operations)
@@ -48,7 +48,7 @@ This repo was tested with dependencies:
 - imageio                   2.31.1 (examples only)
 - opencv-python             4.8.0.74 (examples and tests)
 
-We offer various installation options: 
+We offer various installation options:
 
 - **Basic Installation**. To install the package with minimal dependencies, run:
 ```bash
@@ -80,15 +80,15 @@ The library is designed to intelligently infer and handle tensor dimensions that
 
 Consider the doc-string for the function `utils.apply_matrix`, which transforms batches of point groups using batches of matrices:
 
-```python 
+```python
 def apply_matrix(A: Tensor, pts: Tensor) -> Tensor:
     """ Transform batches of groups of points by batches of matrices
     Args:
         A: (*batch_shape, d, d)
-        pts: (*batch_shape, *group_shape, d) 
+        pts: (*batch_shape, *group_shape, d)
     Returns:
         : (*batch_shape, *group_shape, d)
-           
+
     """
 ```
 
@@ -112,7 +112,7 @@ This library abstracts different camera models as objects that are inherited fro
 
 #### 2.1 Supported Camera Models
 
-The library includes a variety of camera models: 
+The library includes a variety of camera models:
 
 - `PinholeCamera`
 - `OrthographicCamera`
@@ -152,14 +152,14 @@ For full 360, $\phi_{min}=-\pi, \phi_{max}=\pi, \theta_{min}=0, \theta_{max}=\pi
 #### 2.2 Creating Cameras
 
 Cameras must be created via their static 'make' method e.g.
-```python 
+```python
    import nvtorchcam.cameras as cameras
    pin_cam = cameras.PinholeCamera.make(torch.eye(3))
    ortho_cam = cameras.OrthographicCamera.make(torch.eye(3))
 ```
 
 cameras also can be made with arbitrary batch shapes e.g.
-```python 
+```python
    intrinsics = torch.eye(3).reshape(1,1,3,3).expand(2,4,3,3)
    ortho_cam = cameras.OrthographicCamera.make(intrinsics)
    print(ortho_cam.shape) #torch.Size([2, 4])
@@ -188,7 +188,7 @@ tensor([ 5.,  8., -5.])
 tensor([ True,  True, False]) #-5 < z_min so last point is marked invalid
 ```
 
-This example simply shows a scalar camera acting on a group of three points, but cameras can have arbitrary batch-like dimensions and operate on arbitrary groups of points. This is shown in the doc-string for `project_to_pixel`: 
+This example simply shows a scalar camera acting on a group of three points, but cameras can have arbitrary batch-like dimensions and operate on arbitrary groups of points. This is shown in the doc-string for `project_to_pixel`:
 
 ```python
     def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
@@ -247,10 +247,10 @@ Heterogeneous batches of cameras (batches with multiple camera models) can be cr
 
 When slicing heterogeneous batches, the batch will devolve to homogeneous if applicable:
 
-```python 
+```python
    >>> print(type(mixed_batch[0]))
    <class 'nvtorchcam.cameras.PinholeCamera'>
-   >>> print(type(mixed_batch[1])) 
+   >>> print(type(mixed_batch[1]))
    <class 'nvtorchcam.cameras.OrthographicCamera'>
 ```
 
@@ -276,7 +276,7 @@ However, it is recommended to normalize the camera's intrinsic matrix upon creat
 
 We can get a grid of normalized pixel centers with `utils.get_normalized_grid`
 
-```python 
+```python
 >>> grid = utils.get_normalized_grid((4,6),'cpu')
 >>> grid[:,:,0]
 tensor([[-0.8333, -0.5000, -0.1667,  0.1667,  0.5000,  0.8333],
@@ -292,7 +292,7 @@ tensor([[-0.7500, -0.7500, -0.7500, -0.7500, -0.7500, -0.7500],
 
 #### 3.2 Cubemap coordinates
 
-Cubemaps are treated as special images with shape `(*, 6width, width)`. Similarly to `utils.get_normalized_grid` we can get the cubemap pixel centers with the function `utils.get_normalized_grid_cubemap`. 
+Cubemaps are treated as special images with shape `(*, 6width, width)`. Similarly to `utils.get_normalized_grid` we can get the cubemap pixel centers with the function `utils.get_normalized_grid_cubemap`.
 
 ```python
 >>> import nvtorchcam.utils as utils
@@ -426,7 +426,7 @@ tar -xzvf nvtorchcam_example_data.tar.gz
 
 To list available examples:
 
-```bash 
+```bash
 python example_scripts/examples.py
 ```
 Expected output

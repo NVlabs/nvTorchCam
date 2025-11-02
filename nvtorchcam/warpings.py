@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from nvtorchcam import utils
 from nvtorchcam import cameras
-from typing import Optional, Dict, Tuple, Union, Any, Callable, List
+from typing import Optional, Tuple, Union, List
 from torch import Tensor
 import torchvision.transforms as TVT
 

@@ -565,7 +565,6 @@ class EquirectangularCamera(TensorDictionaryAffineCamera):
 
 
 class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
-
     @staticmethod
     def make(
         intrinsics: Tensor,
@@ -638,7 +637,6 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
 
 
 class OpenCVCamera(TensorDictionaryAffineCamera):
-
     @staticmethod
     def make(
         intrinsics: Tensor,
@@ -682,7 +680,6 @@ class OpenCVCamera(TensorDictionaryAffineCamera):
 
 
 class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
-
     @staticmethod
     def make(
         intrinsics: Tensor,
@@ -784,7 +781,6 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
 
 
 class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
-
     @staticmethod
     def make(
         intrinsics: Tensor,
@@ -1109,7 +1105,6 @@ class _HeterogeneousCamera(CameraBase):
 
 
 class CubeCamera(TensorDictionaryCamera):
-
     @staticmethod
     def make(batch_shape, device="cpu"):
         """Make a CubeCamera."""
