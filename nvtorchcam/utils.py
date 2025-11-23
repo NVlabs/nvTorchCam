@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 import torch
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 from torch import Tensor
 
 __all__ = [
@@ -112,7 +113,7 @@ def get_normalized_grid_cubemap(res: int, device: torch.device, pad: int = 0) ->
         device: torch.device
         pad: int = 0
     """
-    grid = get_normalized_grid((res, res), device=device, pad=4 * [pad])  # (w,w,2)
+    grid = get_normalized_grid((res, res), device=device, pad=(pad,) * 4)  # (w,w,2)
     o = torch.ones_like(grid[:, :, 0])
     face0 = torch.stack((o, -grid[:, :, 1], -grid[:, :, 0]), dim=-1)
     face1 = torch.stack((-o, -grid[:, :, 1], grid[:, :, 0]), dim=-1)
@@ -128,7 +129,7 @@ def samples_from_image(
     image: Tensor,
     pts: Tensor,
     mode: str = "bilinear",
-    align_corners: bool = False,
+    align_corners: Optional[bool] = False,
     return_in_image_mask: bool = False,
     padding_mode: str = "zeros",
 ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
@@ -270,9 +271,9 @@ def normalized_intrinsics_from_pixel_intrinsics(
     else:
         raise RuntimeError("intrinsics must have shape (*, 3, 3) or (*, 4)")
 
-    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics.device)
-    image_shape = image_shape.reshape(*([1] * (intrinsics.dim() - 1)), 2)
-    image_shape_half_inv = 2 / image_shape
+    image_shape_t = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics.device)
+    image_shape_t = image_shape_t.reshape(*([1] * (intrinsics.dim() - 1)), 2)
+    image_shape_half_inv = 2.0 / image_shape_t
     new_scale = intrinsics[..., :2] * image_shape_half_inv
     new_shift = intrinsics[..., 2:] * image_shape_half_inv - 1
     intrinsics_n = torch.cat((new_scale, new_shift), dim=-1)
@@ -301,9 +302,9 @@ def pixel_intrinsics_from_normalized_intrinsics(
     else:
         raise RuntimeError("intrinsics must have shape (*, 3, 3) or (*, 4)")
 
-    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics_n.device)
-    image_shape = image_shape.reshape(*([1] * (intrinsics_n.dim() - 1)), 2)
-    image_shape_half = image_shape / 2
+    image_shape_t = torch.tensor((image_shape[1], image_shape[0]), device=intrinsics_n.device)
+    image_shape_t = image_shape_t.reshape(*([1] * (intrinsics_n.dim() - 1)), 2)
+    image_shape_half = image_shape_t / 2.0
     new_scale = intrinsics_n[..., :2] * image_shape_half
     new_shift = intrinsics_n[..., 2:] * image_shape_half + image_shape_half
     intrinsics = torch.cat((new_scale, new_shift), dim=-1)
@@ -321,9 +322,9 @@ def normalized_pts_from_pixel_pts(n_pts: Tensor, image_shape: Tuple[int, int]) -
     Returns:
         pts: (*, 2)
     """
-    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=n_pts.device)
-    image_shape = image_shape.reshape(*([1] * (n_pts.dim() - 1)), 2)
-    image_shape_half_inv = 2 / image_shape
+    image_shape_t = torch.tensor((image_shape[1], image_shape[0]), device=n_pts.device)
+    image_shape_t = image_shape_t.reshape(*([1] * (n_pts.dim() - 1)), 2)
+    image_shape_half_inv = 2.0 / image_shape_t
     pts = image_shape_half_inv * n_pts - 1
     return pts
 
@@ -337,9 +338,9 @@ def pixel_pts_from_normalized_pts(pts: Tensor, image_shape: Tuple[int, int]) -> 
     Returns:
         n_pts: (*, 2)
     """
-    image_shape = torch.tensor((image_shape[1], image_shape[0]), device=pts.device)
-    image_shape = image_shape.reshape(*([1] * (pts.dim() - 1)), 2)
-    image_shape_half = image_shape / 2
+    image_shape_t = torch.tensor((image_shape[1], image_shape[0]), device=pts.device)
+    image_shape_t = image_shape_t.reshape(*([1] * (pts.dim() - 1)), 2)
+    image_shape_half = image_shape_t / 2.0
     n_pts = image_shape_half * pts + image_shape_half
     return n_pts
 
@@ -438,7 +439,7 @@ def compute_jacobian(f, x, *theta):
     id = torch.eye(dim, device=x.device).reshape(1, 1, dim, dim).expand(b, n, dim, dim)
     Df_columns = []
     x = x.detach()
-    theta = [theta_i.detach() for theta_i in theta]
+    theta = tuple(theta_i.detach() for theta_i in theta)
     x.requires_grad = True
     y = f(x, *theta)
     for i in range(0, dim):
@@ -489,7 +490,9 @@ def apply_poly(coeffs: Tensor, vals: Tensor) -> Tensor:
     return out
 
 
-def crop_to_affine(lrtb: Tensor, normalized: bool = True, image_shape: Tuple[int, int] = None):
+def crop_to_affine(
+    lrtb: Tensor, normalized: bool = True, image_shape: Optional[Tuple[int, int]] = None
+):
     """Given the 4 corners of a box as a tensor lrtb = left, right, top, bottom return the
     corresponding affine transform
 

@@ -13,3 +13,10 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        files: ^(nvtorchcam/)  #tests/
+        args: ["--config-file=pyproject.toml"]

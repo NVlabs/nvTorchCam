@@ -38,6 +38,9 @@ all = [
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.package-data]
+nvtorchcam = ["py.typed"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["nvtorchcam*"]
@@ -52,3 +55,11 @@ target-version = "py38"
 "__init__.py" = ["F401"]  # allow public re-exports
 "tests/*" = ["F841"]
 "example_scripts/*" = ["F841"]
+
+[tool.mypy]
+python_version = "3.8"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true

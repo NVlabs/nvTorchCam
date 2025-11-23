@@ -17,7 +17,23 @@ from __future__ import annotations
 import math
 import warnings
 from collections import defaultdict
-from typing import Optional, Dict, Tuple, Union, Any, List, Iterator
+from abc import ABC, abstractmethod
+from typing import (
+    Optional,
+    Dict,
+    Tuple,
+    Union,
+    Any,
+    List,
+    Iterator,
+    Sequence,
+    cast,
+    Type,
+    DefaultDict,
+)
+from typing_extensions import Self, TypeAlias
+import re
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -38,13 +54,44 @@ __all__ = [
     "CubeCamera",
 ]
 
+ShapeLike: TypeAlias = Union[Tuple[int, ...], List[int]]
 
-class CameraBase:
+
+def adjust_shape_message(msg: str) -> str:
+    lists = re.findall(r"\[([^\]]+)\]", msg)
+
+    last_removed = None
+    new_msg = msg
+
+    for lst in lists:
+        parts = [p.strip() for p in lst.split(",")]
+        if len(parts) > 1:
+            last_removed = int(parts[-1])
+            new_inside = ", ".join(parts[:-1])
+        else:
+            new_inside = ""
+
+        new_msg = new_msg.replace(f"[{lst}]", f"[{new_inside}]", 1)
+
+    if last_removed is None:
+        return new_msg
+
+    def shrink(match):
+        size = int(match.group(1))
+        return f"input of size {size // last_removed}"
+
+    new_msg = re.sub(r"input of size (\d+)", shrink, new_msg)
+
+    return new_msg
+
+
+class CameraBase(ABC):
     """Abstract base class for all cameras.
-    Implements __torch_function__ for stack and cat which will create a Heterogenous camera batch
+    Implements __torch_function__ for stack and cat which will create a heterogeneous camera batch
     if trying to concatenate derived classes of different types.
     """
 
+    @abstractmethod
     def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         """Get the ray corresponding to a pixel in camera coordinates. Also returns whether ray is
         considered valid.
@@ -60,6 +107,7 @@ class CameraBase:
         """
         raise NotImplementedError("")
 
+    @abstractmethod
     def project_to_pixel(
         self, pts: Tensor, depth_is_along_ray: bool = False
     ) -> Tuple[Tensor, Tensor, Tensor]:
@@ -77,51 +125,72 @@ class CameraBase:
         raise NotImplementedError("")
 
     @property
-    def shape(self) -> torch.Size:
+    @abstractmethod
+    def shape(self) -> ShapeLike:
         raise NotImplementedError("")
 
     @property
+    @abstractmethod
     def device(self) -> torch.device:
         raise NotImplementedError("")
 
+    @abstractmethod
     def is_central(self) -> bool:
         """Return whether camera model is central"""
         raise NotImplementedError("")
 
+    @abstractmethod
     def __getitem__(self, index: slice) -> CameraBase:
         raise NotImplementedError("")
 
-    def _cat(self, obj_list: List[CameraBase], dim: int = 0) -> CameraBase:
-        raise NotImplementedError("classes derived from CameraBase should implement _cat")
-
-    def _stack(self, obj_list: List[CameraBase], dim: int = 0) -> CameraBase:
+    @abstractmethod
+    def _cat(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
+        """Concatenate a homogeneous sequence of cameras."""
         raise NotImplementedError("")
 
-    def to(self, device: torch.device) -> CameraBase:
+    @abstractmethod
+    def _stack(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
+        """Stack a homogeneous sequence of cameras."""
         raise NotImplementedError("")
 
-    def reshape(self, new_shape: Tuple[int, ...]) -> CameraBase:
+    @abstractmethod
+    def to(self, device: torch.device) -> Self:
+        raise NotImplementedError("")
+
+    @abstractmethod
+    def reshape(self, shape: Union[int, ShapeLike], *extra: int) -> Self:
         raise NotImplementedError("classes derived from CameraBase should implement reshape")
 
-    def permute(self, perm: Tuple[int, ...]) -> CameraBase:
+    @abstractmethod
+    def permute(self, dims: Union[int, ShapeLike], *extra: int) -> Self:
         raise NotImplementedError("classes derived from CameraBase should implement permute")
 
-    def transpose(self, dim0: int, dim1: int) -> CameraBase:
+    @abstractmethod
+    def transpose(self, dim0: int, dim1: int) -> Self:
         raise NotImplementedError("")
 
-    def squeeze(self, dim: Optional[int] = None) -> CameraBase:
+    @abstractmethod
+    def squeeze(self, dim: Optional[int] = None) -> Self:
         raise NotImplementedError("")
 
-    def unsqueeze(self, dim: int) -> CameraBase:
+    @abstractmethod
+    def unsqueeze(self, dim: int) -> Self:
         raise NotImplementedError("")
 
-    def expand(self, *expand_shape: Tuple[int]) -> CameraBase:
+    @abstractmethod
+    def expand(self, size: Union[int, ShapeLike], *extra: int) -> Self:
         raise NotImplementedError("")
 
-    def flip(self, *dims: Tuple[int]) -> CameraBase:
+    @abstractmethod
+    def flip(self, dims: ShapeLike) -> Self:
         raise NotImplementedError("")
 
-    def clone(self) -> CameraBase:
+    @abstractmethod
+    def clone(self) -> Self:
+        raise NotImplementedError("")
+
+    @abstractmethod
+    def detach(self) -> Self:
         raise NotImplementedError("")
 
     def get_camera_rays(
@@ -159,7 +228,7 @@ class CameraBase:
 
     def unproject_depth(
         self, depth: Tensor, to_world: Optional[Tensor] = None, depth_is_along_ray: bool = False
-    ):
+    ) -> Tuple[Tensor, Tensor]:
         """Unproject *depthmaps_per_camera to pointcloud images. Optionally transform pointcloud
         images to world coordinates.
 
@@ -187,12 +256,11 @@ class CameraBase:
         return point_cloud, valid
 
     @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs={}):
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
         if func == torch.cat:
-            if "dim" in kwargs:
-                dim = kwargs["dim"]
-            else:
-                dim = 0
+            dim = kwargs.get("dim", 0)
             obj_list = args[0]
             # homogeneous case
             if len(types) == 1 and _HeterogeneousCamera not in types:
@@ -200,29 +268,26 @@ class CameraBase:
             else:
                 if CubeCamera in types:
                     raise RuntimeError("CubeCamera is not supported in heterogeneous batch")
-                obj_list_as_hetero = []
+                obj_list_as_hetero1: List[CameraBase] = []
                 for obj in obj_list:
                     if not isinstance(obj, _HeterogeneousCamera):
-                        obj = _HeterogeneousCamera.homogeneous_to_heterogeneous(obj)
-                    obj_list_as_hetero.append(obj)
-                return obj._cat(obj_list_as_hetero, dim=dim)
+                        obj = _HeterogeneousCamera._homogeneous_to_heterogeneous(obj)
+                    obj_list_as_hetero1.append(obj)
+                return obj_list_as_hetero1[0]._cat(obj_list_as_hetero1, dim=dim)
         if func == torch.stack:
-            if "dim" in kwargs:
-                dim = kwargs["dim"]
-            else:
-                dim = 0
+            dim = kwargs.get("dim", 0)
             obj_list = args[0]
             if len(types) == 1 and _HeterogeneousCamera not in types:
                 return obj_list[0]._stack(obj_list, dim=dim)
             else:
                 if CubeCamera in types:
                     raise RuntimeError("CubeCamera is not supported in heterogeneous batch")
-                obj_list_as_hetero = []
+                obj_list_as_hetero2: List[CameraBase] = []
                 for obj in obj_list:
                     if not isinstance(obj, _HeterogeneousCamera):
-                        obj = _HeterogeneousCamera.homogeneous_to_heterogeneous(obj)
-                    obj_list_as_hetero.append(obj)
-                return obj._stack(obj_list_as_hetero, dim=dim)
+                        obj = _HeterogeneousCamera._homogeneous_to_heterogeneous(obj)
+                    obj_list_as_hetero2.append(obj)
+                return obj_list_as_hetero2[0]._stack(obj_list_as_hetero2, dim=dim)
 
         raise NotImplementedError("")
 
@@ -247,59 +312,97 @@ class TensorDictionaryCamera(CameraBase):
         assert all(v.device == self._device for k, v in self._values.items())
 
     @property
-    def shape(self):
+    def shape(self) -> ShapeLike:
         return self._shape
 
     @property
-    def device(self):
+    def device(self) -> torch.device:
         return self._device
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(type(self)) + str(self._values)
 
-    def __getitem__(self, index: slice):
+    def __getitem__(self, index: slice) -> Self:
         if isinstance(index, tuple) and (len(index) < len(self.shape)):
             raise IndexError("bad slice index")
         return type(self)({k: v[index] for k, v in self._values.items()}, self._shared_attributes)
 
-    def _cat(self, obj_list, dim=0):
-        new_values = {}
+    def _cat(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
+        new_values: Dict[str, Tensor] = {}
         for k in self._values.keys():
             new_values[k] = torch.cat([obj._values[k] for obj in obj_list], dim=dim)
         return type(self)(new_values, self._shared_attributes)
 
-    def _stack(self, obj_list, dim=0):
-        new_values = {}
+    def _stack(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
+        new_values: Dict[str, Tensor] = {}
         for k in self._values.keys():
             new_values[k] = torch.stack([obj._values[k] for obj in obj_list], dim=dim)
         return type(self)(new_values, self._shared_attributes)
 
-    def to(self, device):
+    def to(self, device: torch.device) -> Self:
         return type(self)(
             {k: v.to(device) for k, v in self._values.items()}, self._shared_attributes
         )
 
-    def reshape(self, *new_shape):
-        if isinstance(new_shape[0], tuple):
-            new_shape = new_shape[0]
-        new_values = {k: v.reshape(*new_shape, v.shape[-1]) for k, v in self._values.items()}
+    def reshape(self, shape: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(shape, (tuple, list)):
+            shape_t = shape
+        else:
+            shape_t = (shape, *extra)
+
+        try:
+            new_values = {k: v.reshape(*shape_t, v.shape[-1]) for k, v in self._values.items()}
+        except Exception as e:
+            s = str(e)
+            s2 = adjust_shape_message(s)
+            raise type(e)(s2) from None
+
         return type(self)(new_values, self._shared_attributes)
 
-    def permute(self, *perm):
-        if len(perm) != len(self.shape):
-            raise RuntimeError()
-        new_values = {k: v.permute(*perm, len(self.shape)) for k, v in self._values.items()}
+    def permute(self, dims: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(dims, (tuple, list)):
+            dims_t = dims
+        else:
+            dims_t = (dims, *extra)
+
+        length = len(self.shape)
+        if not all(isinstance(x, int) for x in dims_t):
+            raise TypeError("permute(): argument 'dims' must be tuple of ints")
+
+        if len(dims_t) != length:
+            raise RuntimeError(
+                f"permute(dims): number of dimensions in the tensor input does not match the length of the desired ordering of dimensions i.e. input.dim() = {length} is not equal to len(dims) = {len(dims_t)}"
+            )
+
+        dims_t2 = []
+        for x in dims_t:
+            if x >= length or x < -length:
+                raise IndexError(
+                    f"Dimension out of range (expected to be in range of [{-length}, {length-1}], but got {x})"
+                )
+            if x < 0:
+                dims_t2.append(x - 1)
+            else:
+                dims_t2.append(x)
+
+        try:
+            new_values = {k: v.permute(*dims_t2, len(self.shape)) for k, v in self._values.items()}
+        except Exception as e:
+            s = str(e)
+            s2 = adjust_shape_message(s)
+            raise type(e)(s2) from None
+
         return type(self)(new_values, self._shared_attributes)
 
-    def transpose(self, dim0, dim1):
+    def transpose(self, dim0: int, dim1: int) -> Self:
         if (dim0 >= len(self.shape)) or (dim1 >= len(self.shape)):
             raise IndexError()
         new_values = {k: v.transpose(dim0, dim1) for k, v in self._values.items()}
         return type(self)(new_values, self._shared_attributes)
 
-    def squeeze(self, dim=None):
+    def squeeze(self, dim: Optional[int] = None) -> Self:
         if dim is None:
-            new_values = {}
+            new_values: Dict[str, Tensor] = {}
             for k, v in self._values.items():
                 new_v = v.squeeze()
                 if v.shape[-1] == 1:
@@ -313,27 +416,51 @@ class TensorDictionaryCamera(CameraBase):
             new_values = {k: v.squeeze(dim) for k, v in self._values.items()}
         return type(self)(new_values, self._shared_attributes)
 
-    def unsqueeze(self, dim):
+    def unsqueeze(self, dim: int) -> Self:
         if (dim > len(self.shape)) or (dim < -1):
             raise IndexError()
-        elif dim == -1:
+        if dim == -1:
             dim = len(self.shape)
         new_values = {k: v.unsqueeze(dim) for k, v in self._values.items()}
         return type(self)(new_values, self._shared_attributes)
 
-    def expand(self, *expand_shape):
-        if isinstance(expand_shape[0], tuple):
-            expand_shape = expand_shape[0]
-        new_values = {k: v.expand(*expand_shape, -1) for k, v in self._values.items()}
+    def expand(self, size: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(size, (tuple, list)):
+            sizes_t = size
+        else:
+            sizes_t = (size, *extra)
+
+        try:
+            new_values = {k: v.expand(*sizes_t, -1) for k, v in self._values.items()}
+        except Exception as e:
+            s = str(e)
+            s2 = adjust_shape_message(s)
+            raise type(e)(s2) from None
+
         return type(self)(new_values, self._shared_attributes)
 
-    def flip(self, *dims):
-        if (max(dims) >= len(self.shape)) or (min(dims) < -len(self.shape)):
-            raise IndexError()
-        new_values = {k: v.flip(dims) for k, v in self._values.items()}
+    def flip(self, dims: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(dims, (tuple, list)):
+            dims_t = dims
+        else:
+            dims_t = (dims, *extra)
+        if not all(isinstance(x, int) for x in dims_t):
+            raise TypeError("flip(): argument 'dims' must be tuple of ints")
+
+        length = len(self.shape)
+        if len(dims_t) == 0:
+            return self
+
+        for d in dims_t:
+            if d >= length or d < -length:
+                raise IndexError(
+                    f"Dimension out of range (expected to be in range of [{-length}, {length-1}], but got {d})"
+                )
+
+        new_values = {k: v.flip(dims_t) for k, v in self._values.items()}
         return type(self)(new_values, self._shared_attributes)
 
-    def clone(self):
+    def clone(self) -> Self:
         new_values = {k: v.clone() for k, v in self._values.items()}
         return type(self)(
             new_values,
@@ -352,9 +479,9 @@ class TensorDictionaryCamera(CameraBase):
 
     def named_tensors(self) -> Iterator[Tuple[str, Tensor]]:
         """Get an iterator work self._values. Useful for setting .requires_grad etc."""
-        return self._values.items()
+        return iter(self._values.items())
 
-    def detach(self):
+    def detach(self) -> Self:
         new_values = {k: v.detach() for k, v in self._values.items()}
         return type(self)(
             new_values,
@@ -366,7 +493,7 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
     """Base class for all cameras that project via a projection function followed by an affine
     intrinsics matrix. Also implements cropping and transforming intrinsics."""
 
-    def affine_transform(self, affine: Tensor, multiply_on_right: bool = False):
+    def affine_transform(self, affine: Tensor, multiply_on_right: bool = False) -> Self:
         """Multiply intrinsics on the left by an affine transformation. Supports multiplying on the
         right with flag multiply_on_right which is needed for mirroring images and the entire world
         as an augmentation.
@@ -394,7 +521,9 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
         new_values["affine"] = new_affine
         return type(self)(_values=new_values, _shared_attributes=self._shared_attributes)
 
-    def crop(self, lrtb: Tensor, normalized: bool = True, image_shape: Tuple[int, int] = None):
+    def crop(
+        self, lrtb: Tensor, normalized: bool = True, image_shape: Optional[Tuple[int, int]] = None
+    ) -> Self:
         """Transform the intrinsics so camera will be consistent with a cropped version of the
         image.
 
@@ -413,8 +542,8 @@ class TensorDictionaryAffineCamera(TensorDictionaryCamera):
 class PinholeCamera(TensorDictionaryAffineCamera):
     """Standard pinhole camera model."""
 
-    @staticmethod
-    def make(intrinsics: Tensor, z_min: Union[Tensor, float] = 1e-6):
+    @classmethod
+    def make(cls, intrinsics: Tensor, z_min: Union[Tensor, float] = 1e-6) -> Self:
         """Make a pinhole camera from intrinsics and set a z_min for marking validity.
 
         Args:
@@ -427,25 +556,27 @@ class PinholeCamera(TensorDictionaryAffineCamera):
         )
 
         _values = {"affine": intrinsics, "z_min": z_min.unsqueeze(-1)}
-        return PinholeCamera(_values)
+        return cls(_values)
 
     def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.pinhole_camera_project_to_pixel(
             self.affine, self.z_min, pts, depth_is_along_ray=depth_is_along_ray
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False):
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.pinhole_camera_pixel_to_ray(self.affine, pix, unit_vec=unit_vec)
 
 
 class OrthographicCamera(TensorDictionaryAffineCamera):
     """Standard orthographic camera model."""
 
-    @staticmethod
-    def make(intrinsics: Tensor, z_min: Union[Tensor, float] = 1e-6):
+    @classmethod
+    def make(cls, intrinsics: Tensor, z_min: Union[Tensor, float] = 1e-6) -> Self:
         """Make a orthographic camera from intrinsics and set a z_min for marking validity.
 
         Args:
@@ -458,32 +589,35 @@ class OrthographicCamera(TensorDictionaryAffineCamera):
         )
 
         _values = {"affine": intrinsics, "z_min": z_min.unsqueeze(-1)}
-        return OrthographicCamera(_values)
+        return cls(_values)
 
     def is_central(self) -> bool:
         return False
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.orthographic_camera_project_to_pixel(
             self.affine, self.z_min, pts, depth_is_along_ray=depth_is_along_ray
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False):
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.orthographic_camera_pixel_to_ray(self.affine, pix, unit_vec=unit_vec)
 
 
 class EquirectangularCamera(TensorDictionaryAffineCamera):
     """Equirectangular camera. Possibly cropped to capture limited azimuth and elevation."""
 
-    @staticmethod
+    @classmethod
     def make(
+        cls,
         phi_range: Union[Tensor, Tuple[float, float]] = (-torch.pi, torch.pi),
         theta_range: Union[Tensor, Tuple[float, float]] = (0, torch.pi),
         intrinsics: Tensor = None,
         min_distance: Union[Tensor, float] = 1e-6,
-        batch_shape: Optional[Tuple[int, ...]] = None,
+        batch_shape: Optional[ShapeLike] = None,
         restrict_valid_rays: bool = True,
-    ):
+    ) -> Self:
         """Make an equirectangular camera.
 
         Creation options:
@@ -548,31 +682,34 @@ class EquirectangularCamera(TensorDictionaryAffineCamera):
 
         _values = {"affine": affine, "min_distance": min_distance.unsqueeze(-1)}
         _shared_attributes = {"restrict_valid_rays": restrict_valid_rays}
-        return EquirectangularCamera(_values, _shared_attributes)
+        return cls(_values, _shared_attributes)
 
-    def is_central(self):
+    def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.equirectangular_camera_project_to_pixel(
             self.affine, self.min_distance, pts, depth_is_along_ray=depth_is_along_ray
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple:
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.equirectangular_camera_pixel_to_ray(
             self.affine, pix, restrict_valid_rays=self.restrict_valid_rays, unit_vec=unit_vec
         )
 
 
 class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
-    @staticmethod
+    @classmethod
     def make(
+        cls,
         intrinsics: Tensor,
         distortion_coeffs: Tensor,
         theta_max: Union[Tensor, float],
         distance_min: Union[Tensor, float] = 1e-6,
         num_undistort_iters: int = 100,
-    ):
+    ) -> Self:
         """Make an OpenCVFisheyeCamera.
 
         Args:
@@ -610,12 +747,14 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
             "distance_min": distance_min.unsqueeze(-1),
         }
         _shared_attributes = {"num_iters": num_undistort_iters}
-        return OpenCVFisheyeCamera(_values, _shared_attributes)
+        return cls(_values, _shared_attributes)
 
     def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.opencv_fisheye_camera_project_to_pixel(
             self.affine,
             self.distortion_coeffs,
@@ -625,7 +764,7 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
             depth_is_along_ray=depth_is_along_ray,
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple:
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.opencv_fisheye_camera_pixel_to_ray(
             self.affine,
             self.distortion_coeffs,
@@ -637,14 +776,15 @@ class OpenCVFisheyeCamera(TensorDictionaryAffineCamera):
 
 
 class OpenCVCamera(TensorDictionaryAffineCamera):
-    @staticmethod
+    @classmethod
     def make(
+        cls,
         intrinsics: Tensor,
         ks: Tensor,
         ps: Union[Tensor, float],
         z_min: Union[Tensor, float] = 1e-6,
         num_undistort_iters: int = 100,
-    ):
+    ) -> Self:
         """Make an OpenCVCamera. Doesn't support thin prism model.
 
         Args:
@@ -663,31 +803,34 @@ class OpenCVCamera(TensorDictionaryAffineCamera):
 
         _values = {"affine": intrinsics, "ks": ks, "ps": ps, "z_min": z_min.unsqueeze(-1)}
         _shared_attributes = {"num_iters": num_undistort_iters}
-        return OpenCVCamera(_values, _shared_attributes)
+        return cls(_values, _shared_attributes)
 
     def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.opencv_camera_project_to_pixel(
             self.affine, self.ks, self.ps, self.z_min, pts, depth_is_along_ray=depth_is_along_ray
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple:
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.opencv_camera_pixel_to_ray(
             self.affine, self.ks, self.ps, pix, unit_vec=unit_vec, num_iters=self.num_iters
         )
 
 
 class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
-    @staticmethod
+    @classmethod
     def make(
+        cls,
         intrinsics: Tensor,
         proj_poly: Tensor,
         unproj_poly: Tensor,
         theta_max: Union[Tensor, float],
         distance_min: Union[Tensor, float] = 1e-6,
-    ):
+    ) -> Self:
         """Make a BackwardForwardPolynomialFisheyeCamera.
 
         Args:
@@ -729,12 +872,14 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
             "theta_max": theta_max.unsqueeze(-1),
             "distance_min": distance_min.unsqueeze(-1),
         }
-        return BackwardForwardPolynomialFisheyeCamera(_values)
+        return cls(_values)
 
     def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.backward_forward_polynomial_fisheye_camera_project_to_pixel(
             self.affine,
             self.proj_poly,
@@ -745,14 +890,12 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
             depth_is_along_ray=depth_is_along_ray,
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple:
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.backward_forward_polynomial_fisheye_camera_pixel_to_ray(
             self.affine, self.proj_poly, self.unproj_poly, self.theta_max, pix, unit_vec=unit_vec
         )
 
-    def promote_degree(
-        self, new_unproj_deg: int, new_proj_deg: int
-    ) -> BackwardForwardPolynomialFisheyeCamera:
+    def promote_degree(self, new_unproj_deg: int, new_proj_deg: int) -> Self:
         """Create a new version of the camera with higher degree, coefficients set to zero."""
         new_values = self._values.copy()
         new_values["unproj_poly"] = F.pad(
@@ -761,18 +904,16 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
         new_values["proj_poly"] = F.pad(
             new_values["proj_poly"], (0, new_proj_deg - new_values["proj_poly"].size(-1))
         )
-        return BackwardForwardPolynomialFisheyeCamera(new_values, self._shared_attributes)
+        return type(self)(new_values, self._shared_attributes)
 
-    def _cat(
-        self, obj_list: List[BackwardForwardPolynomialFisheyeCamera], dim: int = 0
-    ) -> BackwardForwardPolynomialFisheyeCamera:
+    def _cat(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
         """Promote degree of lower degree polynomial if concatenating different degrees."""
         new_proj_deg = max(obj._values["proj_poly"].size(-1) for obj in obj_list)
         new_unproj_deg = max(obj._values["unproj_poly"].size(-1) for obj in obj_list)
         new_obj_list = [obj.promote_degree(new_unproj_deg, new_proj_deg) for obj in obj_list]
         return super()._cat(new_obj_list, dim=dim)
 
-    def _stack(self, obj_list, dim=0):
+    def _stack(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
         """Promote degree of lower degree polynomial if stacking different degrees."""
         new_proj_deg = max(obj._values["proj_poly"].size(-1) for obj in obj_list)
         new_unproj_deg = max(obj._values["unproj_poly"].size(-1) for obj in obj_list)
@@ -781,8 +922,9 @@ class BackwardForwardPolynomialFisheyeCamera(TensorDictionaryAffineCamera):
 
 
 class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
-    @staticmethod
+    @classmethod
     def make(
+        cls,
         intrinsics: Tensor,
         k1: Union[Tensor, float],
         k2: Union[Tensor, float],
@@ -790,7 +932,7 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
         theta_max: Union[Tensor, float],
         distance_min: Union[Tensor, float] = 1e-6,
         num_undistort_iters: int = 100,
-    ):
+    ) -> Self:
         """Create a Kitti360FisheyeCamera.
 
         Args:
@@ -842,12 +984,14 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
             "distance_min": distance_min.unsqueeze(-1),
         }
         _shared_attributes = {"num_iters": num_undistort_iters}
-        return Kitti360FisheyeCamera(_values, _shared_attributes)
+        return cls(_values, _shared_attributes)
 
     def is_central(self) -> bool:
         return True
 
-    def project_to_pixel(self, pts: Tensor, depth_is_along_ray: bool = False):
+    def project_to_pixel(
+        self, pts: Tensor, depth_is_along_ray: bool = False
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.kitti360_fisheye_camera_project_to_pixel(
             self.affine,
             self.ks,
@@ -858,7 +1002,7 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
             depth_is_along_ray=depth_is_along_ray,
         )
 
-    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple:
+    def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         return CF.kitti360_fisheye_camera_pixel_to_ray(
             self.affine,
             self.ks,
@@ -872,7 +1016,7 @@ class Kitti360FisheyeCamera(TensorDictionaryAffineCamera):
 
 class _HeterogeneousCamera(CameraBase):
     def __init__(
-        self, my_dict: Dict[CameraBase, Tuple[Tensor, CameraBase]], shape: Tuple[int, ...]
+        self, my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]], shape: ShapeLike
     ):
         # keys are camera type, values are tuples of
         # (tensor representing linear index, and array of camera of k type)
@@ -882,11 +1026,11 @@ class _HeterogeneousCamera(CameraBase):
         self._device = my_dict[key][1].device
 
     @property
-    def shape(self):
+    def shape(self) -> ShapeLike:
         return self._shape
 
     @property
-    def device(self):
+    def device(self) -> torch.device:
         return self._device
 
     def is_central(self) -> bool:
@@ -936,13 +1080,13 @@ class _HeterogeneousCamera(CameraBase):
         return pix, depth, valid
 
     @staticmethod
-    def homogeneous_to_heterogeneous(cam: CameraBase) -> _HeterogeneousCamera:
+    def _homogeneous_to_heterogeneous(cam: CameraBase) -> _HeterogeneousCamera:
         ptrs = torch.arange(math.prod(cam.shape))
         obj = cam.reshape(-1)
-        my_dict = {type(cam): (ptrs, obj)}
+        my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {type(cam): (ptrs, obj)}
         return _HeterogeneousCamera(my_dict, cam.shape)
 
-    def to_homogeneous(self) -> CameraBase:
+    def _to_homogeneous(self) -> CameraBase:
         keys = self.my_dict.keys()
         if len(keys) != 1:
             raise RuntimeError(
@@ -961,7 +1105,7 @@ class _HeterogeneousCamera(CameraBase):
         old_to_new = -torch.ones(math.prod(self.shape), dtype=temp.dtype)
         old_to_new[old_to_keep] = torch.arange(old_to_keep.size(0))
 
-        new_my_dict = {}
+        new_my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for type_k, (old_ptr_type_k, old_obj_type_k) in self.my_dict.items():
             new_ptr_type_k = old_to_new[old_ptr_type_k]
             idx = new_ptr_type_k > -1
@@ -972,20 +1116,18 @@ class _HeterogeneousCamera(CameraBase):
 
         out = type(self)(new_my_dict, new_shape)
         if len(out.my_dict.keys()) == 1:
-            out = out.to_homogeneous()
-
+            return out._to_homogeneous()
         return out
 
-    @staticmethod
-    def _catfirst(obj_list: List[_HeterogeneousCamera]) -> _HeterogeneousCamera:
-        assert all(isinstance(x, _HeterogeneousCamera) for x in obj_list)
+    @classmethod
+    def _catfirst(cls, obj_list: Sequence[Self]) -> Self:
         shape0 = obj_list[0].shape
         assert all(x.shape[1:] == shape0[1:] for x in obj_list)
 
         offset = 0
-
-        new_my_dict = defaultdict(lambda: ([], []))
-
+        new_my_dict: DefaultDict[Type[CameraBase], Tuple[List[Tensor], List[CameraBase]]] = (
+            defaultdict(lambda: ([], []))
+        )
         new_first_dim = sum([x.shape[0] for x in obj_list])
 
         for obj in obj_list:
@@ -994,122 +1136,147 @@ class _HeterogeneousCamera(CameraBase):
                 new_my_dict[type_k][1].append(homo_obj)
             offset += math.prod(obj.shape)
 
+        new_my_dict2: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for k, v in new_my_dict.items():
-            new_my_dict[k] = (torch.cat(v[0]), torch.cat(v[1]))
+            new_my_dict2[k] = (torch.cat(v[0]), torch.cat(v[1]))
+        return cls(new_my_dict2, (new_first_dim, *shape0[1:]))
 
-        return _HeterogeneousCamera(new_my_dict, (new_first_dim,) + shape0[1:])
-
-    def _cat(self, obj_list: List[_HeterogeneousCamera], dim=0) -> _HeterogeneousCamera:
+    def _cat(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
         obj_list = [x.transpose(0, dim) for x in obj_list]
         cat_first = self._catfirst(obj_list)
         out = cat_first.transpose(0, dim)
         return out
 
-    def _stack(self, obj_list: List[_HeterogeneousCamera], dim: int = 0) -> _HeterogeneousCamera:
+    def _stack(self, obj_list: Sequence[Self], dim: int = 0) -> Self:
         obj_list = [x.unsqueeze(dim) for x in obj_list]
         return self._cat(obj_list, dim=dim)
 
-    def transpose(self, dim0: int, dim1: int) -> _HeterogeneousCamera:
+    def transpose(self, dim0: int, dim1: int) -> Self:
         temp = torch.arange(math.prod(self.shape)).reshape(self.shape)
         new_to_old = temp.transpose(dim0, dim1)
         new_shape = new_to_old.shape
         new_to_old = new_to_old.reshape(-1)
         old_to_new = _invert_permutation(new_to_old)
-        new_my_dict = {}
+        new_my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for k, v in self.my_dict.items():
             new_my_dict[k] = (old_to_new[v[0]], v[1])
 
-        return _HeterogeneousCamera(new_my_dict, new_shape)
+        return type(self)(new_my_dict, new_shape)
 
-    def permute(self, *perm: Tuple) -> _HeterogeneousCamera:
+    def permute(self, dims: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(dims, (tuple, list)):
+            perm = dims
+        else:
+            perm = (dims, *extra)
         temp = torch.arange(math.prod(self.shape)).reshape(self.shape)
         new_to_old = temp.permute(*perm)
         new_shape = new_to_old.shape
         new_to_old = new_to_old.reshape(-1)
         old_to_new = _invert_permutation(new_to_old)
-        new_my_dict = {}
+        new_my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for k, v in self.my_dict.items():
             new_my_dict[k] = (old_to_new[v[0]], v[1])
 
-        return _HeterogeneousCamera(new_my_dict, new_shape)
+        return type(self)(new_my_dict, new_shape)
 
-    def to(self, device: torch.device) -> _HeterogeneousCamera:
-        new_my_dict = {}
+    def to(self, device: torch.device) -> Self:
+        new_my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for k, v in self.my_dict.items():
             new_my_dict[k] = (v[0].to(device), v[1].to(device))
-        return _HeterogeneousCamera(new_my_dict, self.shape)
+        return type(self)(new_my_dict, self.shape)
 
-    def reshape(self, *new_shape: Tuple) -> _HeterogeneousCamera:
+    def reshape(self, shape: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(shape, (tuple, list)):
+            new_shape = shape
+        else:
+            new_shape = (shape, *extra)
+        if not all(isinstance(x, int) for x in new_shape):
+            raise TypeError("reshape(): argument 'shape' must be tuple of ints")
+        new_shape = cast(Tuple[int], new_shape)
         indices_of_neg1 = [index for index, value in enumerate(new_shape) if value == -1]
         if len(indices_of_neg1) > 1:
             raise RuntimeError("only one dimension can be inferred")
         elif len(indices_of_neg1) == 1:
             idx = indices_of_neg1[0]
             infered_dim = int(-math.prod(self.shape) / math.prod(new_shape))
-            new_shape = new_shape[:idx] + (infered_dim,) + new_shape[idx + 1 :]
-
-        if math.prod(new_shape) != math.prod(self.shape):
-            raise RuntimeError(
-                "shape {} is invalid for input of size {}".format(new_shape, self.shape)
-            )
+            new_shape_inf = (*new_shape[:idx], infered_dim, *new_shape[idx + 1 :])
         else:
-            return _HeterogeneousCamera(self.my_dict, new_shape)
+            new_shape_inf = new_shape
+        if math.prod(new_shape_inf) != math.prod(self.shape):
+            raise RuntimeError(
+                "shape '{}' is invalid for input of size {}".format(
+                    list(new_shape), math.prod(self.shape)
+                )
+            )
 
-    def squeeze(self, dim: Optional[int] = None) -> _HeterogeneousCamera:
+        return type(self)(self.my_dict, new_shape_inf)
+
+    def squeeze(self, dim: Optional[int] = None) -> Self:
         if dim is None:
             new_shape = torch.Size([x for x in self.shape if x != 1])
-            return _HeterogeneousCamera(self.my_dict, new_shape)
+            return type(self)(self.my_dict, new_shape)
         elif self.shape[dim] == 1:
-            return _HeterogeneousCamera(self.my_dict, self.shape[:dim] + self.shape[dim + 1 :])
+            return type(self)(self.my_dict, (*self.shape[:dim], *self.shape[dim + 1 :]))
         else:
             return self
 
-    def unsqueeze(self, dim: int) -> _HeterogeneousCamera:
+    def unsqueeze(self, dim: int) -> Self:
         if (dim > len(self.shape)) or (dim < -(len(self.shape) + 1)):
             raise IndexError()
         if dim < 0:
             dim = len(self.shape) + 1 + dim
-        new_shape = torch.Size(self.shape[:dim] + (1,) + self.shape[dim:])
-        return _HeterogeneousCamera(self.my_dict, new_shape)
+        new_shape = torch.Size((*self.shape[:dim], 1, *self.shape[dim:]))
+        return type(self)(self.my_dict, new_shape)
 
-    def expand(self, *expand_shape: Tuple) -> _HeterogeneousCamera:
+    def expand(self, size: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(size, (tuple, list)):
+            expand_shape = size
+        else:
+            expand_shape = (size, *extra)
+
         out = self
         if len(expand_shape) != len(out.shape):
-            raise RuntimeError()
+            raise RuntimeError("The expanded size must be the same length as the original Tensor")
         for dim in range(len(expand_shape)):
             if (expand_shape[dim] != -1) and (expand_shape[dim] != out.shape[dim]):
                 if out.shape[dim] != 1:
-                    raise RuntimeError()
+                    raise RuntimeError(
+                        f"The expanded size of the tensor ({expand_shape[dim]}) must match the existing size ({out.shape[dim]}) at non-singleton dimension {dim}.  Target sizes: {list(expand_shape)}.  Tensor sizes: {list(out.shape)}"
+                    )
                 out = torch.cat([out] * expand_shape[dim], dim=dim)
         return out
 
-    def flip(self, *dims) -> _HeterogeneousCamera:
+    def flip(self, dims: Union[int, ShapeLike], *extra: int) -> Self:
+        if isinstance(dims, (tuple, list)):
+            dims_t = dims
+        else:
+            dims_t = (dims, *extra)
         temp = torch.arange(math.prod(self.shape)).reshape(self.shape)
-        new_to_old = temp.flip(dims)
+        new_to_old = temp.flip(dims_t)
         new_shape = new_to_old.shape
         new_to_old = new_to_old.reshape(-1)
         old_to_new = _invert_permutation(new_to_old)
-        new_my_dict = {}
+        new_my_dict: Dict[Type[CameraBase], Tuple[Tensor, CameraBase]] = {}
         for k, v in self.my_dict.items():
             new_my_dict[k] = (old_to_new[v[0]], v[1])
 
-        return _HeterogeneousCamera(new_my_dict, new_shape)
+        return type(self)(new_my_dict, new_shape)
 
-    def clone(self) -> _HeterogeneousCamera:
+    def clone(self) -> Self:
         new_my_dict = {k: (v[0].clone(), v[1].clone()) for k, v in self.my_dict.items()}
-        return _HeterogeneousCamera(new_my_dict, self.shape)
+        return type(self)(new_my_dict, self.shape)
 
-    def detach(self) -> _HeterogeneousCamera:
+    def detach(self) -> Self:
         new_my_dict = {k: (v[0].detach(), v[1].detach()) for k, v in self.my_dict.items()}
-        return _HeterogeneousCamera(new_my_dict, self.shape)
+        return type(self)(new_my_dict, self.shape)
 
 
 class CubeCamera(TensorDictionaryCamera):
-    @staticmethod
-    def make(batch_shape, device="cpu"):
+    @classmethod
+    def make(cls, batch_shape: ShapeLike, device: torch.device = "cpu") -> Self:
         """Make a CubeCamera."""
         # simple way to hold shape and device and implement tensor-like operations
-        return CubeCamera({"tensor": torch.zeros(batch_shape, device=device).unsqueeze(-1)})
+        return cls({"tensor": torch.zeros(batch_shape, device=device).unsqueeze(-1)})
 
     def pixel_to_ray(self, pix: Tensor, unit_vec: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
         """Pixels can be any 3d point. Just normalizes with 2-norm of inf-norm.
