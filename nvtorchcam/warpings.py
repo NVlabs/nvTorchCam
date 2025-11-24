@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from nvtorchcam import utils
 from nvtorchcam import cameras
-from typing import Optional, Tuple, Union, List
+from typing import Optional, Tuple, Union, List, TypeVar, cast
 from torch import Tensor
 import torchvision.transforms as TVT
 
@@ -35,7 +35,7 @@ __all__ = [
 ]
 
 
-TensorOrTensorList = Union[Tensor, List[Tensor]]
+TensorOrTensorList = TypeVar("TensorOrTensorList", Tensor, List[Tensor])
 
 
 def backwarp_warp_pts(
@@ -65,7 +65,7 @@ def backwarp_warp_pts(
     assert (
         trg_depth.shape[: len(batch_shape)] == batch_shape
     ), "invalid depth shape in backward_warp_pts"
-    assert src_cam.shape + (4, 4) == trg_cam_to_src_cam.shape
+    assert (*src_cam.shape, 4, 4) == trg_cam_to_src_cam.shape
     hw = trg_depth.shape[-2:]
     group_shape, batch_numel = utils._get_group_shape(batch_shape, src_cam.shape)
     depthmaps_per_cam_shape, _ = utils._get_group_shape(batch_shape, trg_depth.shape[:-2])
@@ -285,7 +285,7 @@ def fuse_depths_mvsnet(
     depth_is_along_ray: bool = False,
     interp_mode: str = "bilinear",
     padding_mode: str = "zeros",
-) -> Tuple[Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor]:
     """Logic borrowed from https://github.com/alibaba/cascade-stereo/blob/master/CasMVSNet/test.py,
        adapted for any camera model with batching and GPU support
 
@@ -382,8 +382,7 @@ def stereo_rectify(
     """
 
     assert cams.shape[-1] == 2
-    assert cams.shape == images.shape[:-3]
-    assert to_world.shape == cams.shape + (4, 4)
+    assert to_world.shape == (*cams.shape, 4, 4)
 
     if not cams.is_central():
         raise RuntimeError("got non-central camera in rectify_onto_two_erps.")
@@ -452,7 +451,7 @@ def _make_orthogonal(u, v):
 
 def ray_sphere_intersection(
     origins: Tensor, dirs: Tensor, center: Tensor = torch.zeros(3), radius: float = 1.0
-) -> Tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Intersect batch of rays with a sphere. Used for testing warping functions
 
     Args:
@@ -497,7 +496,7 @@ def render_sphere_image(
     res: Tuple[int, int],
     radius: float = 1.0,
     invalid_value: float = float("nan"),
-) -> Tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Render images of sphere where the sphere is textured using its coordinate locations also return distance maps.
         This is used to test warping functions
 
@@ -574,7 +573,12 @@ def affine_transform_image(
     transformed_image = []
     for image_i, padding_mode_i, interp_mode_i in zip(image, padding_mode, interp_mode):
         transformed_image.append(
-            utils.samples_from_image(image_i, grid, padding_mode=padding_mode_i, mode=interp_mode_i)
+            cast(
+                Tensor,
+                utils.samples_from_image(
+                    image_i, grid, padding_mode=padding_mode_i, mode=interp_mode_i
+                ),
+            )
         )
 
     if unwrap_list:
@@ -627,20 +631,24 @@ def _parse_image_interp_mode_padding_mode(
 ) -> Tuple[List[Tensor], List[str], List[str], bool]:
     if isinstance(image, list):  # if images are not a list make them a list of length 1
         if not isinstance(interp_mode, list):
-            interp_mode = [interp_mode] * len(image)
+            interp_mode_ = [interp_mode] * len(image)
         else:
             assert len(interp_mode) == len(image)
+            interp_mode_ = interp_mode
         if not isinstance(padding_mode, list):
-            padding_mode = [padding_mode] * len(image)
+            padding_mode_ = [padding_mode] * len(image)
         else:
             assert len(padding_mode) == len(image)
+            padding_mode_ = padding_mode
         is_list = False
     else:
         image = [image]
-        interp_mode = [interp_mode]
-        padding_mode = [padding_mode]
+        assert isinstance(interp_mode, str)
+        interp_mode_ = [cast(str, interp_mode)]
+        assert isinstance(padding_mode, str)
+        padding_mode_ = [cast(str, padding_mode)]
         is_list = True
-    return image, interp_mode, padding_mode, is_list
+    return image, interp_mode_, padding_mode_, is_list
 
 
 class RandomResizedCropFlip(nn.Module):
@@ -718,17 +726,19 @@ class RandomResizedCropFlip(nn.Module):
     def get_crop_matrix_torchvision(
         self, N: int, device: torch.device, image: TensorOrTensorList
     ) -> Tensor:
-        if isinstance(image, List):
-            image = image[0]
+        if isinstance(image, list):
+            image_ = image[0]
+        else:
+            image_ = image
         lrtbs = []
 
         for _ in range(N):
-            i, j, h, w = TVT.RandomResizedCrop.get_params(image, self.scale, self.ratio)
+            i, j, h, w = TVT.RandomResizedCrop.get_params(image_, self.scale, self.ratio)
             lrtbs.append((j, j + w, i, i + h))
 
         lrtb = torch.tensor(lrtbs, device=device)
 
-        flat_affine = utils.crop_to_affine(lrtb, normalized=False, image_shape=image.shape[-2:])
+        flat_affine = utils.crop_to_affine(lrtb, normalized=False, image_shape=image_.shape[-2:])
         crop = utils.intrinsics_matrix_from_flat_intrinsics(flat_affine)
         return crop
 
